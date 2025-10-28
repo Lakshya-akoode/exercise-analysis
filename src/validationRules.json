@@ -1,61 +1,71 @@
 {
   "exercise_name": "No \u201cDoming\u201d abdominal stability with leg lift",
-  "total_steps": 2,
-  "video_duration": 99.09899999999999,
   "steps": [
     {
       "step_number": 1,
-      "step_name": "Lay on the back",
-      "description": "Laying on the back with the legs folded",
-      "expected_duration": 40.0,
-      "validation_criteria": {
-        "left_hip_angle": {
-          "min": 108.69120687704535,
-          "max": 111.0586407660555,
-          "expected": 109.87492382155042
+      "step_name": "start_position",
+      "criteria": {
+        "hip_angle": {
+          "min": 104.06135208763456,
+          "max": 126.46556265546064
         },
-        "left_knee_angle": {
-          "min": 37.773565812410546,
-          "max": 180,
-          "expected": 38.906774951417404,
-          "should_be_straight": false
+        "knee_angle": {
+          "expected": 67.01727343392439
         },
-        "left_leg_height": {
-          "min": 0.05,
-          "expected": 0.02,
-          "is_elevated": false
-        },
-        "back_flat": {
-          "max_deviation": 0.1100477255259951,
-          "should_be_flat": true
+        "ankle_height": {
+          "min": 0.2574016883560945,
+          "expected": 0.36133475277868865
         }
       }
     },
     {
       "step_number": 2,
-      "step_name": "lift the leg up",
-      "description": "lifting the leg and holding it high",
-      "expected_duration": 39.0,
-      "validation_criteria": {
-        "left_hip_angle": {
-          "min": 111.14005637688595,
-          "max": 116.97556515234174,
-          "expected": 114.05781076461385
+      "step_name": "lay on your back",
+      "criteria": {
+        "hip_angle": {
+          "min": 78.34090145864505,
+          "max": 151.42510286398854
         },
-        "left_knee_angle": {
-          "min": 37.56637028591605,
-          "max": 180,
-          "expected": 39.444012472513734,
-          "should_be_straight": false
+        "knee_angle": {
+          "expected": 44.25208467661596
         },
-        "left_leg_height": {
-          "min": 0.35,
-          "expected": 0.55,
-          "is_elevated": false
+        "ankle_height": {
+          "min": 0.16124388716861315,
+          "expected": 0.25867270547141435
+        }
+      }
+    },
+    {
+      "step_number": 3,
+      "step_name": "lift your leg up",
+      "criteria": {
+        "hip_angle": {
+          "min": 106.77846686738636,
+          "max": 135.04256861581612
         },
-        "back_flat": {
-          "max_deviation": 0.11749151799381509,
-          "should_be_flat": true
+        "knee_angle": {
+          "expected": 37.95743856744689
+        },
+        "ankle_height": {
+          "min": 0.1767223791477256,
+          "expected": 0.26562406481510714
+        }
+      }
+    },
+    {
+      "step_number": 4,
+      "step_name": "lower your leg and lay on the back",
+      "criteria": {
+        "hip_angle": {
+          "min": 105.22974514828599,
+          "max": 132.54616587788198
+        },
+        "knee_angle": {
+          "expected": 44.66966950597043
+        },
+        "ankle_height": {
+          "min": 0.17247450968543804,
+          "expected": 0.260073685532824
         }
       }
     }
