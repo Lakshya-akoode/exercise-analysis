@@ -839,22 +839,22 @@
   }
 
   .video-container {
-    width: 220px;
+    width: 160px;
     bottom: 10px;
     right: 10px;
   }
 
   .video-container .video-header {
-    padding: 6px 10px;
+    padding: 4px 8px;
   }
 
   .video-container .video-header h3 {
-    font-size: 12px;
+    font-size: 10px;
   }
 
   .video-container .status-indicator {
-    font-size: 10px;
-    padding: 2px 6px;
+    font-size: 8px;
+    padding: 2px 5px;
   }
 
   .reference-video {
@@ -893,6 +893,29 @@
 
   .upload-placeholder h3 {
     font-size: 20px;
+  }
+}
+
+/* Extra small screens (phones in portrait) */
+@media (max-width: 480px) {
+  .video-container {
+    width: 140px;
+    bottom: 8px;
+    right: 8px;
+    border-width: 2px;
+  }
+
+  .video-container .video-header {
+    padding: 3px 6px;
+  }
+
+  .video-container .video-header h3 {
+    font-size: 9px;
+  }
+
+  .video-container .status-indicator {
+    font-size: 7px;
+    padding: 1px 4px;
   }
 }
 
