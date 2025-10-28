@@ -9,7 +9,7 @@ export default function LivePoseInstructor() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [metrics, setMetrics] = useState({ hip_angle: 0, knee_angle: 0, leg_height: 0 });
+  const [metrics, setMetrics] = useState({ hip_angle: 0, knee_angle: 0, ankle_height: 0 });
   const [feedback, setFeedback] = useState("");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [isBodyVisible, setIsBodyVisible] = useState(false);
@@ -134,34 +134,75 @@ export default function LivePoseInstructor() {
 
     const hip_angle = calculateAngle(shoulder, hip, knee);
     const knee_angle = calculateAngle(hip, knee, ankle);
-    const leg_height = 1 - ankle.y;
+    const ankle_height = ankle.y; // Direct y-coordinate (lower is higher on screen)
 
-    const criteria = stepRule.validation_criteria;
+    const criteria = stepRule.criteria;
     let score = 0;
 
-    // Hip angle
-    if (hip_angle >= criteria.left_hip_angle.min && hip_angle <= criteria.left_hip_angle.max)
-      score += 2;
+    // Hip angle - check if within range
+    if (criteria.hip_angle && criteria.hip_angle.min && criteria.hip_angle.max) {
+      if (hip_angle >= criteria.hip_angle.min && hip_angle <= criteria.hip_angle.max) {
+        score += 2;
+      }
+    }
 
-    // Leg height
-    if (criteria.left_leg_height.is_elevated && leg_height >= criteria.left_leg_height.min)
-      score += 2;
-    else if (!criteria.left_leg_height.is_elevated && leg_height < (criteria.left_leg_height.expected + 0.1))
-      score += 2;
+    // Ankle height - check if within acceptable range
+    if (criteria.ankle_height && criteria.ankle_height.min) {
+      const heightDiff = Math.abs(ankle_height - criteria.ankle_height.expected);
+      if (heightDiff < 0.1) { // Within 10% tolerance
+        score += 2;
+      } else if (ankle_height >= criteria.ankle_height.min) {
+        score += 1; // Partial credit if above minimum
+      }
+    }
 
-    // Knee
-    if (!criteria.left_knee_angle.should_be_straight || knee_angle > 160) score += 1;
+    // Knee angle - check if close to expected
+    if (criteria.knee_angle && criteria.knee_angle.expected) {
+      const kneeDiff = Math.abs(knee_angle - criteria.knee_angle.expected);
+      if (kneeDiff < 15) { // Within 15 degrees tolerance
+        score += 1;
+      }
+    }
 
-    return { score, metrics: { hip_angle, knee_angle, leg_height } };
+    return { score, metrics: { hip_angle, knee_angle, ankle_height } };
   }, [calculateAngle]);
 
   // Feedback logic
   const getFeedbackMessage = useCallback((metrics, stepRule) => {
-    const c = stepRule.validation_criteria;
-    if (metrics.leg_height < c.left_leg_height.min) return "Raise your leg higher!";
-    if (metrics.hip_angle < c.left_hip_angle.min) return "Bend your hip more!";
-    if (metrics.hip_angle > c.left_hip_angle.max) return "Straighten your hip!";
-    if (c.left_knee_angle.should_be_straight && metrics.knee_angle < 150) return "Straighten your knee!";
+    const c = stepRule.criteria;
+    
+    // Check hip angle
+    if (c.hip_angle) {
+      if (c.hip_angle.min && metrics.hip_angle < c.hip_angle.min) {
+        return "Bend your hip more!";
+      }
+      if (c.hip_angle.max && metrics.hip_angle > c.hip_angle.max) {
+        return "Straighten your hip!";
+      }
+    }
+    
+    // Check ankle height
+    if (c.ankle_height && c.ankle_height.min) {
+      if (metrics.ankle_height > c.ankle_height.expected + 0.15) {
+        return "Raise your leg higher!";
+      }
+      if (metrics.ankle_height < c.ankle_height.min) {
+        return "Lower your leg slightly!";
+      }
+    }
+    
+    // Check knee angle
+    if (c.knee_angle && c.knee_angle.expected) {
+      const kneeDiff = Math.abs(metrics.knee_angle - c.knee_angle.expected);
+      if (kneeDiff > 20) {
+        if (metrics.knee_angle > c.knee_angle.expected) {
+          return "Bend your knee more!";
+        } else {
+          return "Straighten your knee slightly!";
+        }
+      }
+    }
+    
     return "";
   }, []);
 
@@ -207,8 +248,8 @@ export default function LivePoseInstructor() {
               setReadyToStart(true);
               setIsBodyVisible(true);
               setInstructionType("ready");
-              setInstructionMessage(`Starting: ${validationRules.steps[0].description}`);
-              speak(`Good! Let's start. Step 1: ${validationRules.steps[0].description}`);
+              setInstructionMessage(`Starting: ${validationRules.steps[0].step_name}`);
+              speak(`Good! Let's start. Step 1: ${validationRules.steps[0].step_name}`);
             }
           } else {
             visibilityCheckFramesRef.current = 0;
@@ -283,8 +324,8 @@ export default function LivePoseInstructor() {
               currentStepIndexRef.current++;
               setCurrentStepIndex(prev => prev + 1);
               const nextStep = validationRules.steps[stepIndex + 1];
-              setInstructionMessage(`Next: ${nextStep.description}`);
-              speak(`Good job! Now ${nextStep.description}`);
+              setInstructionMessage(`Next: ${nextStep.step_name}`);
+              speak(`Good job! Now ${nextStep.step_name}`);
               lastSpokenStepRef.current = nextStep.step_name;
             }
           } else stableCounterRef.current = 0;
@@ -376,18 +417,16 @@ export default function LivePoseInstructor() {
     }
   };
 
-  // Calculate time boundaries for each step based on expected_duration
+  // Calculate time boundaries for each step based on start_time and end_time
   const calculateStepTimeBoundaries = () => {
     const times = [];
-    let cumulativeTime = 0;
     
     validationRules.steps.forEach(step => {
       times.push({
-        start: cumulativeTime,
-        end: cumulativeTime + step.expected_duration,
+        start: step.start_time,
+        end: step.end_time,
         stepNumber: step.step_number
       });
-      cumulativeTime += step.expected_duration;
     });
     
     videoStepTimesRef.current = times;
@@ -435,9 +474,14 @@ export default function LivePoseInstructor() {
 
   // Resume video when user advances to next step
   React.useEffect(() => {
-    if (referenceVideoRef.current && referenceVideoUrl && currentStepIndex > 0) {
-      // User advanced to next step, resume video
-      if (referenceVideoRef.current.paused) {
+    if (referenceVideoRef.current && referenceVideoUrl && currentStepIndex > 0 && videoStepTimesRef.current.length > 0) {
+      // User advanced to next step, jump to start time of new step and resume video
+      const currentStepBoundary = videoStepTimesRef.current.find(
+        boundary => boundary.stepNumber === currentStepIndex + 1
+      );
+      
+      if (currentStepBoundary && referenceVideoRef.current.paused) {
+        referenceVideoRef.current.currentTime = currentStepBoundary.start;
         referenceVideoRef.current.play().catch(err => {
           console.log("Video play error:", err);
         });
@@ -527,7 +571,7 @@ export default function LivePoseInstructor() {
                   <strong>Current Step:</strong> {validationRules.steps[currentStepIndex].step_name}
                 </div>
                 <div className="step-description">
-                  {validationRules.steps[currentStepIndex].description}
+                  Time: {validationRules.steps[currentStepIndex].start_time}s - {validationRules.steps[currentStepIndex].end_time}s
                 </div>
                 
                 {currentStepIndex < validationRules.steps.length - 1 && (
@@ -557,8 +601,8 @@ export default function LivePoseInstructor() {
                   <span className="metric-value">{metrics.knee_angle.toFixed(0)}°</span>
                 </div>
                 <div className="metric-row">
-                  <span className="metric-label">Leg Height:</span>
-                  <span className="metric-value">{metrics.leg_height.toFixed(2)}</span>
+                  <span className="metric-label">Ankle Height:</span>
+                  <span className="metric-value">{metrics.ankle_height.toFixed(2)}</span>
                 </div>
                 
                 {/* Progress Bar */}
@@ -597,7 +641,7 @@ export default function LivePoseInstructor() {
           {readyToStart ? '✓ Exercise Active' : '⚠ Position Yourself'}
         </div>
         <p>Current Step: <strong>{validationRules.steps[currentStepIndex].step_name}</strong></p>
-        <p className="description">{validationRules.steps[currentStepIndex].description}</p>
+        <p className="description">Step {currentStepIndex + 1} of {validationRules.steps.length}</p>
       </div>
 
       {/* Your Camera Feed - Fixed Bottom Right */}
