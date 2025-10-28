@@ -1,6 +1,6 @@
 # Live Pose Exercise Trainer
 
-A React-based web application for real-time exercise guidance using MediaPipe pose detection. This application provides step-by-step exercise coaching with automatic pose validation and feedback.
+A React-based web application for real-time exercise guidance using MediaPipe pose detection. This application provides step-by-step exercise instruction with automatic pose validation and feedback.
 
 ## Exercise: "No Doming" Abdominal Stability with Leg Lift
 
@@ -12,7 +12,7 @@ This app guides you through a 2-step abdominal stability exercise with real-time
 - **Real-time Pose Detection**: Uses MediaPipe to track your body pose
 - **Step-by-Step Guidance**: Automatically progresses through exercise steps
 - **Live Feedback**: Provides real-time feedback on your form
-- **Voice Coach**: Voice announcements for step transitions and corrections (can be toggled on/off)
+- **Voice Instructor**: Voice announcements for step transitions and corrections (can be toggled on/off)
 - **Pose Validation**: Validates angles for hip, knee, and leg position
 - **Smooth Transitions**: Smoothed landmark detection for stable tracking
 - **Clean Light UI**: Beautiful, minimalist interface with warm, professional colors

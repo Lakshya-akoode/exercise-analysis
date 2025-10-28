@@ -5,7 +5,7 @@ import { drawConnectors, drawLandmarks, POSE_CONNECTIONS } from "@mediapipe/draw
 import validationRules from "./validationRules.json";
 import "./App.css";
 
-export default function LivePoseCoach() {
+export default function LivePoseInstructor() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -18,6 +18,8 @@ export default function LivePoseCoach() {
   const [videoError, setVideoError] = useState(false);
   const referenceVideoRef = useRef(null);
   const videoStepTimesRef = useRef([]);
+  const [instructionMessage, setInstructionMessage] = useState("Please stand back so your entire body is visible.");
+  const [instructionType, setInstructionType] = useState("positioning"); // positioning, confirming, ready, feedback
 
   // Refs for stability and timing
   const landmarkBufferRef = useRef([]);
@@ -190,12 +192,6 @@ export default function LivePoseCoach() {
         ctx.save();
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
-        // Draw mirrored video
-        ctx.translate(canvasRef.current.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-
         if (results.poseLandmarks) {
           const rawLandmarks = results.poseLandmarks;
           const bodyVisible = checkBodyVisibility(rawLandmarks);
@@ -203,13 +199,22 @@ export default function LivePoseCoach() {
           // Update visibility state
           if (bodyVisible) {
             visibilityCheckFramesRef.current++;
+            const progress = Math.min(visibilityCheckFramesRef.current / 30, 1);
+            setInstructionMessage(`Hold still... ${Math.round(progress * 100)}% confirmed`);
+            setInstructionType("confirming");
+            
             if (visibilityCheckFramesRef.current > 30 && !readyToStart) {
               setReadyToStart(true);
               setIsBodyVisible(true);
+              setInstructionType("ready");
+              setInstructionMessage(`Starting: ${validationRules.steps[0].description}`);
               speak(`Good! Let's start. Step 1: ${validationRules.steps[0].description}`);
             }
           } else {
             visibilityCheckFramesRef.current = 0;
+            setInstructionMessage("⚠ Step Back - Full body needs to be visible");
+            setInstructionType("positioning");
+            
             if (readyToStart) {
               setReadyToStart(false);
               setIsBodyVisible(false);
@@ -237,7 +242,6 @@ export default function LivePoseCoach() {
 
           // Only process exercise if body is visible and ready
           if (!readyToStart) {
-            drawVisibilityOverlay(ctx, bodyVisible);
             ctx.restore();
             return;
           }
@@ -262,7 +266,8 @@ export default function LivePoseCoach() {
 
           // Skip feedback for first 5s
           if (Date.now() - exerciseStartTime < 5000) {
-            drawUIOverlay(ctx, stepIndex, newMetrics);
+            setInstructionType("ready");
+            setInstructionMessage("Exercise in progress...");
             ctx.restore();
             return;
           }
@@ -270,11 +275,15 @@ export default function LivePoseCoach() {
           // Stable pose → advance
           if (score >= 4) {
             stableCounterRef.current++;
+            setInstructionType("ready");
+            setInstructionMessage("✓ Great form! Keep holding...");
+            
             if (stableCounterRef.current >= REQUIRED_STABLE_FRAMES && stepIndex < validationRules.steps.length - 1) {
               stableCounterRef.current = 0;
               currentStepIndexRef.current++;
               setCurrentStepIndex(prev => prev + 1);
               const nextStep = validationRules.steps[stepIndex + 1];
+              setInstructionMessage(`Next: ${nextStep.description}`);
               speak(`Good job! Now ${nextStep.description}`);
               lastSpokenStepRef.current = nextStep.step_name;
             }
@@ -283,28 +292,15 @@ export default function LivePoseCoach() {
            const fb = getFeedbackMessage(newMetrics, step);
            setFeedback(fb);
            if (fb) {
-             // Light feedback box
-             ctx.fillStyle = "rgba(255, 245, 230, 0.95)";
-             ctx.fillRect(20, canvasRef.current.height - 90, canvasRef.current.width - 40, 70);
+             setInstructionType("feedback");
+             setInstructionMessage(fb);
              
-             // Border
-             ctx.strokeStyle = "#D84315";
-             ctx.lineWidth = 3;
-             ctx.strokeRect(20, canvasRef.current.height - 90, canvasRef.current.width - 40, 70);
-             
-             ctx.font = "bold 28px Arial";
-             ctx.fillStyle = "#D84315";
-             ctx.textAlign = "center";
-             ctx.fillText(fb, canvasRef.current.width / 2, canvasRef.current.height - 45);
-
             const now = Date.now();
             if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
               speak(fb);
               lastFeedbackTimeRef.current = now;
             }
           }
-
-          drawUIOverlay(ctx, stepIndex, newMetrics);
         }
         }
         ctx.restore();
@@ -347,111 +343,6 @@ export default function LivePoseCoach() {
     };
   }, [evaluateStep, getFeedbackMessage, speak, checkBodyVisibility, readyToStart]);
 
-  const drawVisibilityOverlay = (ctx, bodyVisible) => {
-    // Compact semi-transparent overlay at top and bottom
-    ctx.fillStyle = "rgba(245, 240, 230, 0.85)";
-    ctx.fillRect(0, 0, canvasRef.current.width, 45);
-    ctx.fillRect(0, canvasRef.current.height - 50, canvasRef.current.width, 50);
-    
-    // Main message at top - smaller and compact
-    ctx.font = "bold 14px Arial";
-    ctx.fillStyle = bodyVisible ? "#4CAF50" : "#D84315";
-    ctx.textAlign = "center";
-    ctx.fillText(
-      bodyVisible ? "✓ Hold still..." : "⚠ Step Back",
-      canvasRef.current.width / 2,
-      20
-    );
-    
-    ctx.font = "11px Arial";
-    ctx.fillStyle = "#5D4037";
-    ctx.fillText(
-      "Full body needed",
-      canvasRef.current.width / 2,
-      35
-    );
-
-    // Progress bar or instructions at bottom - compact
-    if (bodyVisible) {
-      const progress = Math.min(visibilityCheckFramesRef.current / 30, 1);
-      const barWidth = canvasRef.current.width - 40;
-      const barHeight = 6;
-      const x = 20;
-      const y = canvasRef.current.height - 30;
-      
-      ctx.font = "11px Arial";
-      ctx.fillStyle = "#5D4037";
-      ctx.fillText("Confirming...", canvasRef.current.width / 2, y - 8);
-      
-      ctx.fillStyle = "#D7CCC8";
-      ctx.fillRect(x, y, barWidth, barHeight);
-      ctx.fillStyle = "#4CAF50";
-      ctx.fillRect(x, y, barWidth * progress, barHeight);
-      
-      ctx.font = "10px Arial";
-      ctx.fillStyle = "#4CAF50";
-      ctx.fillText(`${Math.round(progress * 100)}%`, canvasRef.current.width / 2, y + 15);
-    } else {
-      ctx.font = "11px Arial";
-      ctx.fillStyle = "#D84315";
-      ctx.fillText(
-        "Move back",
-        canvasRef.current.width / 2,
-        canvasRef.current.height - 25
-      );
-    }
-  };
-
-  const drawUIOverlay = (ctx, stepIndex, metrics) => {
-    const currentStep = validationRules.steps[stepIndex];
-    const nextStep = stepIndex < validationRules.steps.length - 1 ? validationRules.steps[stepIndex + 1] : null;
-    
-    // Light overlay at top
-    ctx.fillStyle = "rgba(245, 240, 230, 0.95)";
-    ctx.fillRect(0, 0, canvasRef.current.width, 140);
-    
-    // Current step
-    ctx.font = "bold 26px Arial";
-    ctx.fillStyle = "#5D4037";
-    ctx.textAlign = "left";
-    ctx.fillText(`Current: ${currentStep.step_name}`, 20, 40);
-
-    // Next step
-    if (nextStep) {
-      ctx.font = "20px Arial";
-      ctx.fillStyle = "#8D6E63";
-      ctx.fillText(`Next: ${nextStep.step_name}`, 20, 75);
-    } else {
-      ctx.font = "22px Arial";
-      ctx.fillStyle = "#4CAF50";
-      ctx.fillText("✓ Exercise Complete!", 20, 75);
-    }
-
-    // Metrics with icons
-    ctx.font = "16px Arial";
-    ctx.fillStyle = "#6D4C41";
-    ctx.fillText(
-      `Hip: ${metrics.hip_angle.toFixed(0)}°  Knee: ${metrics.knee_angle.toFixed(0)}°  Height: ${metrics.leg_height.toFixed(2)}`,
-      20,
-      110
-    );
-
-    // Progress indicator
-    const progress = (stepIndex + 1) / validationRules.steps.length;
-    const barWidth = 200;
-    const barX = canvasRef.current.width - barWidth - 20;
-    const barY = 120;
-    
-    ctx.fillStyle = "#D7CCC8";
-    ctx.fillRect(barX, barY, barWidth, 6);
-    ctx.fillStyle = "#8D6E63";
-    ctx.fillRect(barX, barY, barWidth * progress, 6);
-    
-    ctx.font = "14px Arial";
-    ctx.fillStyle = "#5D4037";
-    ctx.textAlign = "right";
-    ctx.fillText(`Step ${stepIndex + 1}/${validationRules.steps.length}`, canvasRef.current.width - 20, 110);
-  };
 
   const handleRestart = () => {
     stableCounterRef.current = 0;
@@ -557,59 +448,135 @@ export default function LivePoseCoach() {
   return (
     <div className="app-container">
       <div className="app-header">
-        <h1>AI Exercise Coach</h1>
+        <h1>AI Exercise Instructor</h1>
         <p>Real-time pose detection and guidance</p>
       </div>
 
       <div className="video-section">
-        {/* Reference Video */}
-        {referenceVideoUrl ? (
-          <div className="reference-video-container">
-            <div className="video-header">
-              <h3>📹 Reference Video</h3>
-              <button onClick={handleRemoveVideo} className="remove-video-btn" title="Remove video">
-                ✕
-              </button>
+        <div className="video-and-instructions">
+          {/* Reference Video */}
+          {referenceVideoUrl ? (
+            <div className="reference-video-container">
+              <div className="video-header">
+                <h3>📹 Reference Video</h3>
+                <button onClick={handleRemoveVideo} className="remove-video-btn" title="Remove video">
+                  ✕
+                </button>
+              </div>
+              <video 
+                ref={referenceVideoRef}
+                className="reference-video" 
+                width="640" 
+                height="480"
+                controls
+                onTimeUpdate={handleVideoTimeUpdate}
+              >
+                <source src={referenceVideoUrl} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+              <div className="video-sync-indicator">
+                {referenceVideoRef.current?.paused && readyToStart && (
+                  <div className="sync-message">
+                    ⏸ Video paused - Complete current step to continue
+                  </div>
+                )}
+              </div>
             </div>
-            <video 
-              ref={referenceVideoRef}
-              className="reference-video" 
-              width="640" 
-              height="480"
-              controls
-              onTimeUpdate={handleVideoTimeUpdate}
-            >
-              <source src={referenceVideoUrl} type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
-            <div className="video-sync-indicator">
-              {referenceVideoRef.current?.paused && readyToStart && (
-                <div className="sync-message">
-                  ⏸ Video paused - Complete current step to continue
+          ) : (
+            <div className="video-upload-container">
+              <div className="upload-placeholder">
+                <div className="upload-icon">📹</div>
+                <h3>No Reference Video</h3>
+                <p>Place video in <code>public/videos/</code> folder</p>
+                <p className="video-names">Supported names: reference.mp4, exercise.mp4, demo.mp4, video.mp4</p>
+                <div className="upload-divider">OR</div>
+                <label className="upload-label">
+                  <input 
+                    type="file" 
+                    accept="video/*" 
+                    onChange={handleVideoUpload}
+                    style={{ display: 'none' }}
+                  />
+                  <span className="upload-btn-text">Choose Video Manually</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* Instruction Panel */}
+          <div className="instruction-panel">
+            <div className="instruction-header">
+              <h3>📋 Instructions</h3>
+            </div>
+            
+            {/* Status Message */}
+            <div className={`instruction-message ${instructionType}`}>
+              <div className="message-icon">
+                {instructionType === "positioning" && "⚠"}
+                {instructionType === "confirming" && "⏳"}
+                {instructionType === "ready" && "✓"}
+                {instructionType === "feedback" && "💡"}
+              </div>
+              <div className="message-text">{instructionMessage}</div>
+            </div>
+
+            {/* Current Step Info */}
+            {readyToStart && (
+              <div className="step-info">
+                <div className="step-current">
+                  <strong>Current Step:</strong> {validationRules.steps[currentStepIndex].step_name}
                 </div>
-              )}
-            </div>
+                <div className="step-description">
+                  {validationRules.steps[currentStepIndex].description}
+                </div>
+                
+                {currentStepIndex < validationRules.steps.length - 1 && (
+                  <div className="step-next">
+                    <strong>Next:</strong> {validationRules.steps[currentStepIndex + 1].step_name}
+                  </div>
+                )}
+                
+                {currentStepIndex === validationRules.steps.length - 1 && (
+                  <div className="step-complete">
+                    🎉 Final Step - Almost Done!
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Metrics Display */}
+            {readyToStart && (
+              <div className="metrics-display">
+                <h4>Real-time Metrics</h4>
+                <div className="metric-row">
+                  <span className="metric-label">Hip Angle:</span>
+                  <span className="metric-value">{metrics.hip_angle.toFixed(0)}°</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label">Knee Angle:</span>
+                  <span className="metric-value">{metrics.knee_angle.toFixed(0)}°</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label">Leg Height:</span>
+                  <span className="metric-value">{metrics.leg_height.toFixed(2)}</span>
+                </div>
+                
+                {/* Progress Bar */}
+                <div className="progress-section">
+                  <div className="progress-label">
+                    Step {currentStepIndex + 1} of {validationRules.steps.length}
+                  </div>
+                  <div className="progress-bar-container">
+                    <div 
+                      className="progress-bar-fill" 
+                      style={{ width: `${((currentStepIndex + 1) / validationRules.steps.length) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="video-upload-container">
-            <div className="upload-placeholder">
-              <div className="upload-icon">📹</div>
-              <h3>No Reference Video</h3>
-              <p>Place video in <code>public/videos/</code> folder</p>
-              <p className="video-names">Supported names: reference.mp4, exercise.mp4, demo.mp4, video.mp4</p>
-              <div className="upload-divider">OR</div>
-              <label className="upload-label">
-                <input 
-                  type="file" 
-                  accept="video/*" 
-                  onChange={handleVideoUpload}
-                  style={{ display: 'none' }}
-                />
-                <span className="upload-btn-text">Choose Video Manually</span>
-              </label>
-            </div>
-          </div>
-        )}
+        </div>
 
         {/* Camera Feed moved outside video-section to position fixed at bottom-right */}
       
