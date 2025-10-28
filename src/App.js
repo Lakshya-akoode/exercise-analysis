@@ -502,7 +502,7 @@ export default function LivePoseInstructor() {
           {referenceVideoUrl ? (
             <div className="reference-video-container">
               <div className="video-header">
-                <h3>📹 Reference Video</h3>
+                <h3>▶️ Reference Video</h3>
                 <button onClick={handleRemoveVideo} className="remove-video-btn" title="Remove video">
                   ✕
                 </button>
@@ -529,10 +529,10 @@ export default function LivePoseInstructor() {
           ) : (
             <div className="video-upload-container">
               <div className="upload-placeholder">
-                <div className="upload-icon">📹</div>
+                <div className="upload-icon">🎬</div>
                 <h3>No Reference Video</h3>
                 <p>Place video in <code>public/videos/</code> folder</p>
-                <p className="video-names">Supported names: reference.mp4, exercise.mp4, demo.mp4, video.mp4</p>
+                <p className="video-names">Supported: a4.mov, exercise.mp4, demo.mp4, video.mp4</p>
                 <div className="upload-divider">OR</div>
                 <label className="upload-label">
                   <input 
@@ -541,7 +541,7 @@ export default function LivePoseInstructor() {
                     onChange={handleVideoUpload}
                     style={{ display: 'none' }}
                   />
-                  <span className="upload-btn-text">Choose Video Manually</span>
+                  <span className="upload-btn-text">📁 Choose Video</span>
                 </label>
               </div>
             </div>
@@ -550,16 +550,16 @@ export default function LivePoseInstructor() {
           {/* Instruction Panel */}
           <div className="instruction-panel">
             <div className="instruction-header">
-              <h3>📋 Instructions</h3>
+              <h3>📝 Live Instructions</h3>
             </div>
             
             {/* Status Message */}
             <div className={`instruction-message ${instructionType}`}>
               <div className="message-icon">
-                {instructionType === "positioning" && "⚠"}
-                {instructionType === "confirming" && "⏳"}
-                {instructionType === "ready" && "✓"}
-                {instructionType === "feedback" && "💡"}
+                {instructionType === "positioning" && "⚠️"}
+                {instructionType === "confirming" && "⏱️"}
+                {instructionType === "ready" && "✅"}
+                {instructionType === "feedback" && "💬"}
               </div>
               <div className="message-text">{instructionMessage}</div>
             </div>
@@ -567,22 +567,26 @@ export default function LivePoseInstructor() {
             {/* Current Step Info */}
             {readyToStart && (
               <div className="step-info">
+                <div className="step-badge">
+                  Step {currentStepIndex + 1}/{validationRules.steps.length}
+                </div>
                 <div className="step-current">
-                  <strong>Current Step:</strong> {validationRules.steps[currentStepIndex].step_name}
+                  <span className="step-icon">🎯</span>
+                  <strong>{validationRules.steps[currentStepIndex].step_name}</strong>
                 </div>
                 <div className="step-description">
-                  Time: {validationRules.steps[currentStepIndex].start_time}s - {validationRules.steps[currentStepIndex].end_time}s
+                  ⏱️ {validationRules.steps[currentStepIndex].start_time}s - {validationRules.steps[currentStepIndex].end_time}s
                 </div>
                 
                 {currentStepIndex < validationRules.steps.length - 1 && (
                   <div className="step-next">
-                    <strong>Next:</strong> {validationRules.steps[currentStepIndex + 1].step_name}
+                    <span className="next-icon">▶️</span> {validationRules.steps[currentStepIndex + 1].step_name}
                   </div>
                 )}
                 
                 {currentStepIndex === validationRules.steps.length - 1 && (
                   <div className="step-complete">
-                    🎉 Final Step - Almost Done!
+                    🏆 Final Step - Almost Done!
                   </div>
                 )}
               </div>
@@ -591,24 +595,35 @@ export default function LivePoseInstructor() {
             {/* Metrics Display */}
             {readyToStart && (
               <div className="metrics-display">
-                <h4>Real-time Metrics</h4>
-                <div className="metric-row">
-                  <span className="metric-label">Hip Angle:</span>
-                  <span className="metric-value">{metrics.hip_angle.toFixed(0)}°</span>
-                </div>
-                <div className="metric-row">
-                  <span className="metric-label">Knee Angle:</span>
-                  <span className="metric-value">{metrics.knee_angle.toFixed(0)}°</span>
-                </div>
-                <div className="metric-row">
-                  <span className="metric-label">Ankle Height:</span>
-                  <span className="metric-value">{metrics.ankle_height.toFixed(2)}</span>
+                <h4>📊 Live Metrics</h4>
+                <div className="metrics-grid">
+                  <div className="metric-item">
+                    <div className="metric-icon hip">🔵</div>
+                    <div className="metric-content">
+                      <span className="metric-label">Hip Angle</span>
+                      <span className="metric-value">{metrics.hip_angle.toFixed(0)}°</span>
+                    </div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-icon knee">🟢</div>
+                    <div className="metric-content">
+                      <span className="metric-label">Knee Angle</span>
+                      <span className="metric-value">{metrics.knee_angle.toFixed(0)}°</span>
+                    </div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-icon ankle">🟡</div>
+                    <div className="metric-content">
+                      <span className="metric-label">Ankle Height</span>
+                      <span className="metric-value">{metrics.ankle_height.toFixed(2)}</span>
+                    </div>
+                  </div>
                 </div>
                 
                 {/* Progress Bar */}
                 <div className="progress-section">
                   <div className="progress-label">
-                    Step {currentStepIndex + 1} of {validationRules.steps.length}
+                    Overall Progress: {Math.round(((currentStepIndex + 1) / validationRules.steps.length) * 100)}%
                   </div>
                   <div className="progress-bar-container">
                     <div 
@@ -626,28 +641,33 @@ export default function LivePoseInstructor() {
       
       </div>
 
-      <div className="controls">
-        <button onClick={handleRestart} className="restart-btn">
-          <span>🔄 Restart Exercise</span>
-        </button>
-        <button onClick={handleToggleVoice} className={`voice-btn ${voiceEnabled ? 'voice-on' : 'voice-off'}`}>
-          <span>{voiceEnabled ? '🔊 Voice On' : '🔇 Voice Off'}</span>
-        </button>
-      </div>
-
-      <div className="info-panel">
-        <h2>{validationRules.exercise_name}</h2>
-        <div className={`status-badge ${readyToStart ? 'ready' : 'positioning'}`}>
-          {readyToStart ? '✓ Exercise Active' : '⚠ Position Yourself'}
+      {/* Controls and Info Row */}
+      <div className="bottom-section">
+        <div className="exercise-info-card">
+          <div className="exercise-title">
+            <h2>Exercise: {validationRules.exercise_name}</h2>
+          </div>
+          <div className={`status-badge ${readyToStart ? 'ready' : 'positioning'}`}>
+            {readyToStart ? '✅ Active' : '⚠️ Position Required'}
+          </div>
         </div>
-        <p>Current Step: <strong>{validationRules.steps[currentStepIndex].step_name}</strong></p>
-        <p className="description">Step {currentStepIndex + 1} of {validationRules.steps.length}</p>
+
+        <div className="controls">
+          <button onClick={handleRestart} className="restart-btn">
+            <span className="btn-icon">↻</span>
+            <span className="btn-text">Restart</span>
+          </button>
+          <button onClick={handleToggleVoice} className={`voice-btn ${voiceEnabled ? 'voice-on' : 'voice-off'}`}>
+            <span className="btn-icon">{voiceEnabled ? '🔊' : '🔇'}</span>
+            <span className="btn-text">{voiceEnabled ? 'Voice On' : 'Voice Off'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Your Camera Feed - Fixed Bottom Right */}
       <div className="video-container">
         <div className="video-header">
-          <h3>🎥 You</h3>
+          <h3>📷 Your Feed</h3>
           <div className={`status-indicator ${readyToStart ? 'active' : 'inactive'}`}>
             {readyToStart ? '●' : '○'}
           </div>
