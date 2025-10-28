@@ -228,9 +228,8 @@ export default function LivePoseCoach() {
           ctx.scale(-1, 1);
           
           const skeletonColor = bodyVisible ? "#4CAF50" : "#FF9800";
-          const landmarkColor = bodyVisible ? "#2196F3" : "#FF5722";
           drawConnectors(ctx, rawLandmarks, POSE_CONNECTIONS, { color: skeletonColor, lineWidth: 5 });
-          drawLandmarks(ctx, rawLandmarks, { color: landmarkColor, lineWidth: 2, radius: 5 });
+          // Removed landmark points for cleaner view
           
           ctx.restore();
 
