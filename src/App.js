@@ -1,0 +1,650 @@
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { Pose } from "@mediapipe/pose";
+import { Camera } from "@mediapipe/camera_utils";
+import { drawConnectors, drawLandmarks, POSE_CONNECTIONS } from "@mediapipe/drawing_utils";
+import validationRules from "./validationRules.json";
+import "./App.css";
+
+export default function LivePoseCoach() {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [metrics, setMetrics] = useState({ hip_angle: 0, knee_angle: 0, leg_height: 0 });
+  const [feedback, setFeedback] = useState("");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isBodyVisible, setIsBodyVisible] = useState(false);
+  const [readyToStart, setReadyToStart] = useState(false);
+  const [referenceVideoUrl, setReferenceVideoUrl] = useState(null);
+  const [videoError, setVideoError] = useState(false);
+  const referenceVideoRef = useRef(null);
+  const videoStepTimesRef = useRef([]);
+
+  // Refs for stability and timing
+  const landmarkBufferRef = useRef([]);
+  const stableCounterRef = useRef(0);
+  const currentStepIndexRef = useRef(0);
+  const lastFeedbackTimeRef = useRef(0);
+  const lastSpokenStepRef = useRef(null);
+  const initializedRef = useRef(false);
+  const poseInitializedRef = useRef(false);
+  const [exerciseStartTime] = useState(Date.now());
+  const lastVisibilityWarningRef = useRef(0);
+  const visibilityCheckFramesRef = useRef(0);
+
+  const SMOOTHING_FRAMES = 5;
+  const REQUIRED_STABLE_FRAMES = 10;
+  const FEEDBACK_COOLDOWN = 3000; // 3 seconds
+  const VISIBILITY_WARNING_INTERVAL = 10000; // 10 seconds
+
+  // Sync step ref
+  useEffect(() => {
+    currentStepIndexRef.current = currentStepIndex;
+  }, [currentStepIndex]);
+
+  // Voice function
+  const speak = useCallback((text) => {
+    if (voiceEnabled && 'speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+
+      const loadVoices = () => {
+        const voices = speechSynthesis.getVoices();
+        const female = voices.find(v => 
+          v.name.toLowerCase().includes("female") ||
+          v.name.toLowerCase().includes("zira") ||
+          v.name.toLowerCase().includes("samantha")
+        );
+        if (female) utterance.voice = female;
+        speechSynthesis.speak(utterance);
+      };
+
+      if (speechSynthesis.getVoices().length === 0)
+        speechSynthesis.addEventListener("voiceschanged", loadVoices);
+      else loadVoices();
+    }
+  }, [voiceEnabled]);
+
+  // Auto-load video from public/videos folder on component mount
+  useEffect(() => {
+    const loadVideoFromFolder = async () => {
+      // Try to load video from public/videos folder
+      const videoNames = ['a4.mov', 'exercise.mp4', 'demo.mp4', 'video.mp4'];
+      
+      for (const videoName of videoNames) {
+        try { 
+          const videoPath = `/videos/${videoName}`;
+          const response = await fetch(videoPath, { method: 'HEAD' });
+          if (response.ok) {
+            setReferenceVideoUrl(videoPath);
+            calculateStepTimeBoundaries();
+            console.log(`✅ Auto-loaded video: ${videoName}`);
+            return;
+          }
+        } catch (err) {
+          continue;
+        }
+      }
+      console.log('ℹ️ No video found in public/videos/ folder');
+    };
+    
+    loadVideoFromFolder();
+  }, []);
+
+  // Welcome message
+  useEffect(() => {
+    if (!initializedRef.current && voiceEnabled) {
+      initializedRef.current = true;
+      setTimeout(() => {
+        speak("Please stand back so your entire body is visible in the camera.");
+      }, 800);
+    }
+  }, [speak, voiceEnabled]);
+
+  // Check if all key body points are visible
+  const checkBodyVisibility = useCallback((landmarks) => {
+    const requiredPoints = [11, 12, 23, 24, 25, 26, 27, 28]; // Shoulders, hips, knees, ankles
+    const visibilityThreshold = 0.5;
+    
+    for (let idx of requiredPoints) {
+      if (!landmarks[idx] || landmarks[idx].visibility < visibilityThreshold) {
+        return false;
+      }
+    }
+    return true;
+  }, []);
+
+  // Angle calculation
+  const calculateAngle = useCallback((a, b, c) => {
+    const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let angle = Math.abs((radians * 180.0) / Math.PI);
+    if (angle > 180.0) angle = 360 - angle;
+    return angle;
+  }, []);
+
+  // Step evaluation
+  const evaluateStep = useCallback((landmarks, stepRule) => {
+    const L_SHOULDER = 11, L_HIP = 23, L_KNEE = 25, L_ANKLE = 27;
+    const shoulder = landmarks[L_SHOULDER];
+    const hip = landmarks[L_HIP];
+    const knee = landmarks[L_KNEE];
+    const ankle = landmarks[L_ANKLE];
+
+    const hip_angle = calculateAngle(shoulder, hip, knee);
+    const knee_angle = calculateAngle(hip, knee, ankle);
+    const leg_height = 1 - ankle.y;
+
+    const criteria = stepRule.validation_criteria;
+    let score = 0;
+
+    // Hip angle
+    if (hip_angle >= criteria.left_hip_angle.min && hip_angle <= criteria.left_hip_angle.max)
+      score += 2;
+
+    // Leg height
+    if (criteria.left_leg_height.is_elevated && leg_height >= criteria.left_leg_height.min)
+      score += 2;
+    else if (!criteria.left_leg_height.is_elevated && leg_height < (criteria.left_leg_height.expected + 0.1))
+      score += 2;
+
+    // Knee
+    if (!criteria.left_knee_angle.should_be_straight || knee_angle > 160) score += 1;
+
+    return { score, metrics: { hip_angle, knee_angle, leg_height } };
+  }, [calculateAngle]);
+
+  // Feedback logic
+  const getFeedbackMessage = useCallback((metrics, stepRule) => {
+    const c = stepRule.validation_criteria;
+    if (metrics.leg_height < c.left_leg_height.min) return "Raise your leg higher!";
+    if (metrics.hip_angle < c.left_hip_angle.min) return "Bend your hip more!";
+    if (metrics.hip_angle > c.left_hip_angle.max) return "Straighten your hip!";
+    if (c.left_knee_angle.should_be_straight && metrics.knee_angle < 150) return "Straighten your knee!";
+    return "";
+  }, []);
+
+  // Pose initialization
+  useEffect(() => {
+    if (!videoRef.current || !canvasRef.current || poseInitializedRef.current) return;
+    poseInitializedRef.current = true;
+
+    let pose = null;
+    let camera = null;
+    let isCleaningUp = false;
+
+    const initializePose = async () => {
+      pose = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+    });
+    pose.setOptions({
+        modelComplexity: 1,
+      smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+    });
+    
+    pose.onResults((results) => {
+        if (!canvasRef.current || isCleaningUp) return;
+        
+        const ctx = canvasRef.current.getContext("2d");
+        ctx.save();
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+        // Draw mirrored video
+        ctx.translate(canvasRef.current.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        if (results.poseLandmarks) {
+          const rawLandmarks = results.poseLandmarks;
+          const bodyVisible = checkBodyVisibility(rawLandmarks);
+          
+          // Update visibility state
+          if (bodyVisible) {
+            visibilityCheckFramesRef.current++;
+            if (visibilityCheckFramesRef.current > 30 && !readyToStart) {
+              setReadyToStart(true);
+              setIsBodyVisible(true);
+              speak(`Good! Let's start. Step 1: ${validationRules.steps[0].description}`);
+            }
+          } else {
+            visibilityCheckFramesRef.current = 0;
+            if (readyToStart) {
+              setReadyToStart(false);
+              setIsBodyVisible(false);
+            }
+            // Voice warning every 10 seconds
+            const now = Date.now();
+            if (now - lastVisibilityWarningRef.current > VISIBILITY_WARNING_INTERVAL) {
+              speak("Please step back. Your full body needs to be visible.");
+              lastVisibilityWarningRef.current = now;
+            }
+          }
+
+          // Draw skeleton - mirrored to match video, thicker and more visible
+          ctx.save();
+          ctx.translate(canvasRef.current.width, 0);
+          ctx.scale(-1, 1);
+          
+          const skeletonColor = bodyVisible ? "#4CAF50" : "#FF9800";
+          const landmarkColor = bodyVisible ? "#2196F3" : "#FF5722";
+          drawConnectors(ctx, rawLandmarks, POSE_CONNECTIONS, { color: skeletonColor, lineWidth: 5 });
+          drawLandmarks(ctx, rawLandmarks, { color: landmarkColor, lineWidth: 2, radius: 5 });
+          
+          ctx.restore();
+
+          const landmarks = rawLandmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }));
+
+          // Only process exercise if body is visible and ready
+          if (!readyToStart) {
+            drawVisibilityOverlay(ctx, bodyVisible);
+            ctx.restore();
+            return;
+          }
+
+          // Smooth
+          landmarkBufferRef.current.push(landmarks);
+          if (landmarkBufferRef.current.length > SMOOTHING_FRAMES)
+            landmarkBufferRef.current.shift();
+
+          if (landmarkBufferRef.current.length >= SMOOTHING_FRAMES) {
+          const smoothed = landmarkBufferRef.current[0].map((_, i) => {
+            const sum = landmarkBufferRef.current.reduce((acc, lm) => ({
+              x: acc.x + lm[i].x, y: acc.y + lm[i].y, z: acc.z + lm[i].z
+            }), { x: 0, y: 0, z: 0 });
+            return { x: sum.x / SMOOTHING_FRAMES, y: sum.y / SMOOTHING_FRAMES, z: sum.z / SMOOTHING_FRAMES };
+          });
+
+          const stepIndex = currentStepIndexRef.current;
+          const step = validationRules.steps[stepIndex];
+          const { score, metrics: newMetrics } = evaluateStep(smoothed, step);
+          setMetrics(newMetrics);
+
+          // Skip feedback for first 5s
+          if (Date.now() - exerciseStartTime < 5000) {
+            drawUIOverlay(ctx, stepIndex, newMetrics);
+            ctx.restore();
+            return;
+          }
+
+          // Stable pose → advance
+          if (score >= 4) {
+            stableCounterRef.current++;
+            if (stableCounterRef.current >= REQUIRED_STABLE_FRAMES && stepIndex < validationRules.steps.length - 1) {
+              stableCounterRef.current = 0;
+              currentStepIndexRef.current++;
+              setCurrentStepIndex(prev => prev + 1);
+              const nextStep = validationRules.steps[stepIndex + 1];
+              speak(`Good job! Now ${nextStep.description}`);
+              lastSpokenStepRef.current = nextStep.step_name;
+            }
+          } else stableCounterRef.current = 0;
+
+           const fb = getFeedbackMessage(newMetrics, step);
+           setFeedback(fb);
+           if (fb) {
+             // Light feedback box
+             ctx.fillStyle = "rgba(255, 245, 230, 0.95)";
+             ctx.fillRect(20, canvasRef.current.height - 90, canvasRef.current.width - 40, 70);
+             
+             // Border
+             ctx.strokeStyle = "#D84315";
+             ctx.lineWidth = 3;
+             ctx.strokeRect(20, canvasRef.current.height - 90, canvasRef.current.width - 40, 70);
+             
+             ctx.font = "bold 28px Arial";
+             ctx.fillStyle = "#D84315";
+             ctx.textAlign = "center";
+             ctx.fillText(fb, canvasRef.current.width / 2, canvasRef.current.height - 45);
+
+            const now = Date.now();
+            if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
+              speak(fb);
+              lastFeedbackTimeRef.current = now;
+            }
+          }
+
+          drawUIOverlay(ctx, stepIndex, newMetrics);
+        }
+        }
+        ctx.restore();
+      });
+
+      // Initialize camera
+      if (videoRef.current) {
+        try {
+          camera = new Camera(videoRef.current, {
+        onFrame: async () => {
+              if (!isCleaningUp && pose) {
+          await pose.send({ image: videoRef.current });
+              }
+        },
+        width: 640,
+        height: 480,
+      });
+      camera.start();
+        } catch (err) {
+          console.error("Camera error:", err);
+        }
+      }
+    };
+
+    initializePose();
+
+    return () => {
+      isCleaningUp = true;
+      poseInitializedRef.current = false;
+      
+      if (camera) {
+        camera.stop();
+        camera = null;
+      }
+      
+      if (pose) {
+        pose.close();
+        pose = null;
+      }
+    };
+  }, [evaluateStep, getFeedbackMessage, speak, checkBodyVisibility, readyToStart]);
+
+  const drawVisibilityOverlay = (ctx, bodyVisible) => {
+    // Compact semi-transparent overlay at top and bottom
+    ctx.fillStyle = "rgba(245, 240, 230, 0.85)";
+    ctx.fillRect(0, 0, canvasRef.current.width, 45);
+    ctx.fillRect(0, canvasRef.current.height - 50, canvasRef.current.width, 50);
+    
+    // Main message at top - smaller and compact
+    ctx.font = "bold 14px Arial";
+    ctx.fillStyle = bodyVisible ? "#4CAF50" : "#D84315";
+    ctx.textAlign = "center";
+    ctx.fillText(
+      bodyVisible ? "✓ Hold still..." : "⚠ Step Back",
+      canvasRef.current.width / 2,
+      20
+    );
+    
+    ctx.font = "11px Arial";
+    ctx.fillStyle = "#5D4037";
+    ctx.fillText(
+      "Full body needed",
+      canvasRef.current.width / 2,
+      35
+    );
+
+    // Progress bar or instructions at bottom - compact
+    if (bodyVisible) {
+      const progress = Math.min(visibilityCheckFramesRef.current / 30, 1);
+      const barWidth = canvasRef.current.width - 40;
+      const barHeight = 6;
+      const x = 20;
+      const y = canvasRef.current.height - 30;
+      
+      ctx.font = "11px Arial";
+      ctx.fillStyle = "#5D4037";
+      ctx.fillText("Confirming...", canvasRef.current.width / 2, y - 8);
+      
+      ctx.fillStyle = "#D7CCC8";
+      ctx.fillRect(x, y, barWidth, barHeight);
+      ctx.fillStyle = "#4CAF50";
+      ctx.fillRect(x, y, barWidth * progress, barHeight);
+      
+      ctx.font = "10px Arial";
+      ctx.fillStyle = "#4CAF50";
+      ctx.fillText(`${Math.round(progress * 100)}%`, canvasRef.current.width / 2, y + 15);
+    } else {
+      ctx.font = "11px Arial";
+      ctx.fillStyle = "#D84315";
+      ctx.fillText(
+        "Move back",
+        canvasRef.current.width / 2,
+        canvasRef.current.height - 25
+      );
+    }
+  };
+
+  const drawUIOverlay = (ctx, stepIndex, metrics) => {
+    const currentStep = validationRules.steps[stepIndex];
+    const nextStep = stepIndex < validationRules.steps.length - 1 ? validationRules.steps[stepIndex + 1] : null;
+    
+    // Light overlay at top
+    ctx.fillStyle = "rgba(245, 240, 230, 0.95)";
+    ctx.fillRect(0, 0, canvasRef.current.width, 140);
+    
+    // Current step
+    ctx.font = "bold 26px Arial";
+    ctx.fillStyle = "#5D4037";
+    ctx.textAlign = "left";
+    ctx.fillText(`Current: ${currentStep.step_name}`, 20, 40);
+
+    // Next step
+    if (nextStep) {
+      ctx.font = "20px Arial";
+      ctx.fillStyle = "#8D6E63";
+      ctx.fillText(`Next: ${nextStep.step_name}`, 20, 75);
+    } else {
+      ctx.font = "22px Arial";
+      ctx.fillStyle = "#4CAF50";
+      ctx.fillText("✓ Exercise Complete!", 20, 75);
+    }
+
+    // Metrics with icons
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "#6D4C41";
+    ctx.fillText(
+      `Hip: ${metrics.hip_angle.toFixed(0)}°  Knee: ${metrics.knee_angle.toFixed(0)}°  Height: ${metrics.leg_height.toFixed(2)}`,
+      20,
+      110
+    );
+
+    // Progress indicator
+    const progress = (stepIndex + 1) / validationRules.steps.length;
+    const barWidth = 200;
+    const barX = canvasRef.current.width - barWidth - 20;
+    const barY = 120;
+    
+    ctx.fillStyle = "#D7CCC8";
+    ctx.fillRect(barX, barY, barWidth, 6);
+    ctx.fillStyle = "#8D6E63";
+    ctx.fillRect(barX, barY, barWidth * progress, 6);
+    
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#5D4037";
+    ctx.textAlign = "right";
+    ctx.fillText(`Step ${stepIndex + 1}/${validationRules.steps.length}`, canvasRef.current.width - 20, 110);
+  };
+
+  const handleRestart = () => {
+    stableCounterRef.current = 0;
+    currentStepIndexRef.current = 0;
+    visibilityCheckFramesRef.current = 0;
+    setCurrentStepIndex(0);
+    setFeedback("");
+    setReadyToStart(false);
+    setIsBodyVisible(false);
+    landmarkBufferRef.current = [];
+    
+    // Reset reference video to start
+    if (referenceVideoRef.current) {
+      referenceVideoRef.current.currentTime = 0;
+      referenceVideoRef.current.pause();
+    }
+    
+    speak("Restarting. Please ensure your full body is visible.");
+  };
+
+  const handleToggleVoice = () => setVoiceEnabled(v => !v);
+
+  const handleVideoUpload = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setReferenceVideoUrl(url);
+      
+      // Calculate step time boundaries
+      calculateStepTimeBoundaries();
+    }
+  };
+
+  // Calculate time boundaries for each step based on expected_duration
+  const calculateStepTimeBoundaries = () => {
+    const times = [];
+    let cumulativeTime = 0;
+    
+    validationRules.steps.forEach(step => {
+      times.push({
+        start: cumulativeTime,
+        end: cumulativeTime + step.expected_duration,
+        stepNumber: step.step_number
+      });
+      cumulativeTime += step.expected_duration;
+    });
+    
+    videoStepTimesRef.current = times;
+  };
+
+  const handleRemoveVideo = () => {
+    if (referenceVideoUrl) {
+      URL.revokeObjectURL(referenceVideoUrl);
+      setReferenceVideoUrl(null);
+      videoStepTimesRef.current = [];
+    }
+  };
+
+  // Handle video time update - pause at step boundaries
+  const handleVideoTimeUpdate = () => {
+    if (!referenceVideoRef.current || videoStepTimesRef.current.length === 0) return;
+    
+    const currentTime = referenceVideoRef.current.currentTime;
+    const currentStepNum = currentStepIndexRef.current + 1; // step_number is 1-based
+    
+    // Find the time boundary for current step
+    const stepBoundary = videoStepTimesRef.current.find(
+      boundary => boundary.stepNumber === currentStepNum
+    );
+    
+    if (!stepBoundary) return;
+    
+    // If video reaches end of current step, pause it
+    if (currentTime >= stepBoundary.end - 0.5) { // 0.5 second buffer
+      referenceVideoRef.current.pause();
+      // Keep video at the end of current step
+      referenceVideoRef.current.currentTime = stepBoundary.end;
+    }
+  };
+
+  // Start reference video when user is ready
+  React.useEffect(() => {
+    if (readyToStart && referenceVideoRef.current && referenceVideoUrl) {
+      referenceVideoRef.current.currentTime = 0;
+      referenceVideoRef.current.play().catch(err => {
+        console.log("Video autoplay prevented:", err);
+      });
+    }
+  }, [readyToStart, referenceVideoUrl]);
+
+  // Resume video when user advances to next step
+  React.useEffect(() => {
+    if (referenceVideoRef.current && referenceVideoUrl && currentStepIndex > 0) {
+      // User advanced to next step, resume video
+      if (referenceVideoRef.current.paused) {
+        referenceVideoRef.current.play().catch(err => {
+          console.log("Video play error:", err);
+        });
+      }
+    }
+  }, [currentStepIndex, referenceVideoUrl]);
+
+  return (
+    <div className="app-container">
+      <div className="app-header">
+        <h1>AI Exercise Coach</h1>
+        <p>Real-time pose detection and guidance</p>
+      </div>
+
+      <div className="video-section">
+        {/* Reference Video */}
+        {referenceVideoUrl ? (
+          <div className="reference-video-container">
+            <div className="video-header">
+              <h3>📹 Reference Video</h3>
+              <button onClick={handleRemoveVideo} className="remove-video-btn" title="Remove video">
+                ✕
+              </button>
+            </div>
+            <video 
+              ref={referenceVideoRef}
+              className="reference-video" 
+              width="640" 
+              height="480"
+              controls
+              onTimeUpdate={handleVideoTimeUpdate}
+            >
+              <source src={referenceVideoUrl} type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
+            <div className="video-sync-indicator">
+              {referenceVideoRef.current?.paused && readyToStart && (
+                <div className="sync-message">
+                  ⏸ Video paused - Complete current step to continue
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="video-upload-container">
+            <div className="upload-placeholder">
+              <div className="upload-icon">📹</div>
+              <h3>No Reference Video</h3>
+              <p>Place video in <code>public/videos/</code> folder</p>
+              <p className="video-names">Supported names: reference.mp4, exercise.mp4, demo.mp4, video.mp4</p>
+              <div className="upload-divider">OR</div>
+              <label className="upload-label">
+                <input 
+                  type="file" 
+                  accept="video/*" 
+                  onChange={handleVideoUpload}
+                  style={{ display: 'none' }}
+                />
+                <span className="upload-btn-text">Choose Video Manually</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Camera Feed moved outside video-section to position fixed at bottom-right */}
+      
+      </div>
+
+      <div className="controls">
+        <button onClick={handleRestart} className="restart-btn">
+          <span>🔄 Restart Exercise</span>
+        </button>
+        <button onClick={handleToggleVoice} className={`voice-btn ${voiceEnabled ? 'voice-on' : 'voice-off'}`}>
+          <span>{voiceEnabled ? '🔊 Voice On' : '🔇 Voice Off'}</span>
+        </button>
+      </div>
+
+      <div className="info-panel">
+        <h2>{validationRules.exercise_name}</h2>
+        <div className={`status-badge ${readyToStart ? 'ready' : 'positioning'}`}>
+          {readyToStart ? '✓ Exercise Active' : '⚠ Position Yourself'}
+        </div>
+        <p>Current Step: <strong>{validationRules.steps[currentStepIndex].step_name}</strong></p>
+        <p className="description">{validationRules.steps[currentStepIndex].description}</p>
+      </div>
+
+      {/* Your Camera Feed - Fixed Bottom Right */}
+      <div className="video-container">
+        <div className="video-header">
+          <h3>🎥 You</h3>
+          <div className={`status-indicator ${readyToStart ? 'active' : 'inactive'}`}>
+            {readyToStart ? '●' : '○'}
+          </div>
+        </div>
+        <video ref={videoRef} className="video" width="280" height="210" autoPlay muted playsInline></video>
+        <canvas ref={canvasRef} className="canvas" width="280" height="210"></canvas>
+      </div>
+    </div>
+  );
+}

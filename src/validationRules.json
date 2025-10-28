@@ -1,0 +1,67 @@
+{
+  "exercise_name": "No \"Doming\" abdominal stability with leg lift",
+  "total_steps": 2,
+  "video_duration": 99.09899999999999,
+  "steps": [
+    {
+      "step_number": 1,
+      "step_name": "Lay on the back",
+      "description": "Laying on the back with the legs folded",
+      "expected_duration": 40.0,
+      "validation_criteria": {
+        "left_hip_angle": {
+          "min": 108.69120687704535,
+          "max": 111.0586407660555,
+          "expected": 109.87492382155042
+        },
+        "left_knee_angle": {
+          "min": 37.773565812410546,
+          "max": 180,
+          "expected": 38.906774951417404,
+          "should_be_straight": false
+        },
+        "left_leg_height": {
+          "min": 0.05,
+          "expected": 0.02,
+          "is_elevated": false
+        },
+        "back_flat": {
+          "max_deviation": 0.1100477255259951,
+          "should_be_flat": true
+        }
+      }
+    },
+    {
+      "step_number": 2,
+      "step_name": "lift the leg up",
+      "description": "lifting the leg and holding it high",
+      "expected_duration": 39.0,
+      "validation_criteria": {
+        "left_hip_angle": {
+          "min": 111.14005637688595,
+          "max": 116.97556515234174,
+          "expected": 114.05781076461385
+        },
+        "left_knee_angle": {
+          "min": 37.56637028591605,
+          "max": 180,
+          "expected": 39.444012472513734,
+          "should_be_straight": false
+        },
+        "left_leg_height": {
+          "min": 0.35,
+          "expected": 0.55,
+          "is_elevated": false
+        },
+        "back_flat": {
+          "max_deviation": 0.11749151799381509,
+          "should_be_flat": true
+        }
+      }
+    }
+  ]
+}
+
+
+
+
