@@ -676,7 +676,7 @@ export default function LivePoseInstructor() {
   return (
     <div className="app-container">
       <div className="app-header">
-        <h1>AI Exercise Instructor</h1>
+        <h1>M2 Method Exercise Instructor</h1>
         <p>Real-time pose detection and guidance</p>
       </div>
 
