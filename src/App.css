@@ -266,6 +266,74 @@
   line-height: 1.4;
 }
 
+/* Distance Indicator */
+.distance-indicator {
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  border: 2px solid;
+}
+
+.distance-indicator.too_close {
+  background: linear-gradient(135deg, #FFEBEE 0%, #FFCDD2 100%);
+  border-color: #F44336;
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.2);
+}
+
+.distance-indicator.too_far {
+  background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
+  border-color: #FFC107;
+  box-shadow: 0 4px 12px rgba(255, 193, 7, 0.2);
+}
+
+.distance-indicator.good {
+  background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+  border-color: #4CAF50;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
+}
+
+.distance-indicator.unknown {
+  background: linear-gradient(135deg, #F5F5F5 0%, #E0E0E0 100%);
+  border-color: #9E9E9E;
+  box-shadow: 0 4px 12px rgba(158, 158, 158, 0.2);
+}
+
+.distance-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.distance-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.distance-label {
+  font-size: 12px;
+  color: #6D4C41;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.distance-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #5D4037;
+}
+
+.distance-metric {
+  font-size: 11px;
+  color: #8D6E63;
+  font-family: monospace;
+}
+
 .step-info {
   background: rgba(141, 110, 99, 0.08);
   padding: 14px;
@@ -396,6 +464,17 @@
   background: rgba(141, 110, 99, 0.15);
   padding: 3px 10px;
   border-radius: 6px;
+}
+
+.metric-range {
+  font-size: 11px;
+  color: #8D6E63;
+  padding: 4px 12px;
+  margin: -6px 0 8px 0;
+  background: rgba(76, 175, 80, 0.08);
+  border-left: 3px solid #4CAF50;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .progress-section {
@@ -560,7 +639,7 @@
   box-shadow: 
     0 6px 24px rgba(93, 64, 55, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.5) inset;
-  background-color: #000;
+  background-color: #1a1a1a;
   border-radius: 10px;
   overflow: hidden;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
@@ -596,6 +675,9 @@
   width: 100%;
   height: auto;
   display: block;
+  min-height: 210px;
+  object-fit: cover;
+  background-color: #1a1a1a;
 }
 
 .video-container .canvas {
@@ -606,6 +688,7 @@
   height: 100%;
   pointer-events: none;
   display: block;
+  background: transparent;
 }
 
 /* Bottom Section - Exercise Info and Controls */

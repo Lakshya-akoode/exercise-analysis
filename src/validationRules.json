@@ -1,5 +1,14 @@
 {
   "exercise_name": "No \u201cDoming\u201d abdominal stability with leg lift",
+  "total_steps": 4,
+  "video_duration": 99.09899999999999,
+  
+  "ideal_camera_distance": {
+    "min_z": -0.2246,
+    "max_z": 0.0347,
+    "mean_z": -0.0063
+  },
+
   "steps": [
     {
       "step_number": 1,
@@ -7,16 +16,25 @@
       "start_time": 0.0,
       "end_time": 10.0,
       "criteria": {
-        "hip_angle": {
-          "min": 106.99916125138986,
-          "max": 123.64020437541245
+        "left_hip_angle": {
+          "expected": 115.3595102993883
         },
-        "knee_angle": {
-          "expected": 67.16465833561644
+        "right_hip_angle": {
+          "expected": 92.16746469844733
         },
-        "ankle_height": {
-          "min": 0.21024947939900984,
-          "expected": 0.35617065218119004
+        "left_knee_angle": {
+          "min": 57.49212431976812,
+          "max": 77.00392688864349
+        },
+        "right_knee_angle": {
+          "min": 43.420844393297095,
+          "max": 61.266943530560305
+        },
+        "left_ankle_height": {
+          "expected": 0.34278555040226427
+        },
+        "right_ankle_height": {
+          "expected": 0.3151107579928364
         }
       }
     },
@@ -26,16 +44,25 @@
       "start_time": 12.0,
       "end_time": 60.0,
       "criteria": {
-        "hip_angle": {
-          "min": 79.53445331528519,
-          "max": 150.58367192689056
+        "left_hip_angle": {
+          "expected": 114.78938152828904
         },
-        "knee_angle": {
-          "expected": 44.28057811510853
+        "right_hip_angle": {
+          "expected": 110.31278305406651
         },
-        "ankle_height": {
-          "min": 0.13965549643875885,
-          "expected": 0.2579660037379799
+        "left_knee_angle": {
+          "min": 27.760445665308872,
+          "max": 60.971698972997636
+        },
+        "right_knee_angle": {
+          "min": 20.280729626030855,
+          "max": 62.79789294323627
+        },
+        "left_ankle_height": {
+          "expected": 0.24279971364932657
+        },
+        "right_ankle_height": {
+          "expected": 0.2879824280929066
         }
       }
     },
@@ -45,16 +72,25 @@
       "start_time": 62.0,
       "end_time": 90.0,
       "criteria": {
-        "hip_angle": {
-          "min": 111.38561588648162,
-          "max": 130.6657805460151
+        "left_hip_angle": {
+          "expected": 120.90089149812245
         },
-        "knee_angle": {
-          "expected": 37.895223470258216
+        "right_hip_angle": {
+          "expected": 92.31532763334823
         },
-        "ankle_height": {
-          "min": 0.15312739461753622,
-          "expected": 0.26520293211056734
+        "left_knee_angle": {
+          "min": 27.189295223884315,
+          "max": 48.82907904662706
+        },
+        "right_knee_angle": {
+          "min": 89.57081631377504,
+          "max": 140.1871380170687
+        },
+        "left_ankle_height": {
+          "expected": 0.2499854776562497
+        },
+        "right_ankle_height": {
+          "expected": 0.6006708946104525
         }
       }
     },
@@ -64,16 +100,25 @@
       "start_time": 91.0,
       "end_time": 99.0,
       "criteria": {
-        "hip_angle": {
-          "min": 109.34661004993694,
-          "max": 128.08016684309084
+        "left_hip_angle": {
+          "expected": 118.96210093260126
         },
-        "knee_angle": {
-          "expected": 44.70310591935586
+        "right_hip_angle": {
+          "expected": 119.16598778970872
         },
-        "ankle_height": {
-          "min": 0.15100518109539804,
-          "expected": 0.26033088488341716
+        "left_knee_angle": {
+          "min": 32.958906559360045,
+          "max": 56.4508672898631
+        },
+        "right_knee_angle": {
+          "min": 31.056995756982065,
+          "max": 54.483002877513
+        },
+        "left_ankle_height": {
+          "expected": 0.24451849665390643
+        },
+        "right_ankle_height": {
+          "expected": 0.27232016608520737
         }
       }
     }
