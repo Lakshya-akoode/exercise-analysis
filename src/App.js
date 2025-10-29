@@ -499,6 +499,35 @@ export default function LivePoseInstructor() {
           const { score, metrics: newMetrics } = evaluateStep(smoothed, step);
           setMetrics(newMetrics);
 
+          // Check if video has progressed ahead of user's current step
+          const currentVideoTime = referenceVideoRef.current ? referenceVideoRef.current.currentTime : 0;
+          
+          // Find which step the video is currently in
+          let videoStepIndex = stepIndex;
+          for (let i = 0; i < validationRules.steps.length; i++) {
+            const s = validationRules.steps[i];
+            if (currentVideoTime >= s.start_time && currentVideoTime < s.end_time) {
+              videoStepIndex = i;
+              break;
+            }
+          }
+          
+          // If video is ahead of user's progress, prompt them to catch up
+          if (videoStepIndex > stepIndex && referenceVideoRef.current && !referenceVideoRef.current.paused) {
+            const nextStep = validationRules.steps[videoStepIndex];
+            const stepName = nextStep.step_name.replace(/_/g, ' ');
+            setInstructionType("feedback");
+            setInstructionMessage(`⚠️ Follow the video! Time to ${stepName}`);
+            
+            const now = Date.now();
+            if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
+              speak(`Follow the video. It's time to ${stepName}`);
+              lastFeedbackTimeRef.current = now;
+            }
+            ctx.restore();
+            return;
+          }
+
           // Skip feedback for first 5s
           if (Date.now() - exerciseStartTime < 5000) {
             setInstructionType("ready");
