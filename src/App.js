@@ -838,18 +838,44 @@ export default function LivePoseInstructor() {
           const { score, maxScore, metrics: newMetrics } = evaluateStep(smoothed, videoStep);
           setMetrics(newMetrics);
           
+          // Calculate time elapsed in current step (for 5-second grace period)
+          const timeInCurrentStep = currentVideoTime - videoStep.start_time;
+          const minPlayTime = 5.0; // Minimum 5 seconds before pausing
+          const canPause = timeInCurrentStep >= minPlayTime;
+          
           // Check back flatness - pause video if back isn't flat when required
           const backFlat = videoStep.back_flat;
           const backFlatFailed = backFlat && backFlat.should_be_flat && 
                                  newMetrics.back_flatness_deviation > backFlat.max_deviation;
           
-          if (backFlatFailed && referenceVideoRef.current && !referenceVideoRef.current.paused) {
-            // Pause video if back isn't flat
+          // Check leg position for step 2 (lay on your back) - leg should be down
+          const isStep2 = videoStepIndex === 1; // Step 2 is index 1
+          let legUpFailed = false;
+          if (isStep2 && videoStep.criteria.ankle_height) {
+            // In step 2, ankle should be low (leg down). If ankle_height is too high, leg is up
+            const ankleHeightMax = videoStep.criteria.ankle_height.max;
+            const range = ankleHeightMax - videoStep.criteria.ankle_height.min;
+            const buffer = range * 0.10; // 10% buffer
+            const maxAllowed = ankleHeightMax + buffer;
+            legUpFailed = newMetrics.ankle_height > maxAllowed;
+          }
+          
+          // Pause video if conditions fail (after 5-second grace period)
+          if (canPause && (backFlatFailed || legUpFailed) && referenceVideoRef.current && !referenceVideoRef.current.paused) {
+            let pauseMessage = "";
+            if (backFlatFailed && legUpFailed) {
+              pauseMessage = "⚠️ Video paused - Lie down flat and keep your legs down!";
+            } else if (backFlatFailed) {
+              pauseMessage = "⚠️ Video paused - Lie down flat! Keep your back flat on the ground!";
+            } else if (legUpFailed) {
+              pauseMessage = "⚠️ Video paused - Keep your legs down on the ground!";
+            }
+            
             referenceVideoRef.current.pause();
             setInstructionType("feedback");
-            setInstructionMessage("⚠️ Video paused - Lie down flat! Keep your back flat on the ground!");
-          } else if (!backFlatFailed && referenceVideoRef.current && referenceVideoRef.current.paused && exerciseStarted) {
-            // Resume video when back becomes flat again
+            setInstructionMessage(pauseMessage);
+          } else if (!backFlatFailed && !legUpFailed && referenceVideoRef.current && referenceVideoRef.current.paused && exerciseStarted) {
+            // Resume video when conditions are met again
             referenceVideoRef.current.play().catch(err => {
               console.log("Video resume error:", err);
             });
