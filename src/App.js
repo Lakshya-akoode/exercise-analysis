@@ -11,11 +11,20 @@ export default function LivePoseInstructor() {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [metrics, setMetrics] = useState({ 
     left_hip_angle: 0, 
-    left_knee_angle: 0, 
-    left_ankle_height: 0,
+    left_knee_angle: 0,
+    left_ankle_angle: 0,
+    left_elbow_angle: 0,
+    left_shoulder_angle: 0,
     right_hip_angle: 0,
     right_knee_angle: 0,
-    right_ankle_height: 0
+    right_ankle_angle: 0,
+    right_elbow_angle: 0,
+    right_shoulder_angle: 0,
+    ankle_height: 0,
+    knee_height: 0,
+    hip_height: 0,
+    shoulder_height: 0,
+    back_flatness_deviation: 0
   });
   const [feedback, setFeedback] = useState("");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -46,8 +55,8 @@ export default function LivePoseInstructor() {
 
   const SMOOTHING_FRAMES = 5;
   const REQUIRED_STABLE_FRAMES = 10;
-  const FEEDBACK_COOLDOWN = 3000; // 3 seconds
-  const VISIBILITY_WARNING_INTERVAL = 10000; // 10 seconds
+  const FEEDBACK_COOLDOWN = 15000; // 15 seconds - increased to reduce frequency
+  const VISIBILITY_WARNING_INTERVAL = 15000; // 15 seconds - increased to reduce frequency
 
   // Sync refs with state
   useEffect(() => {
@@ -58,12 +67,22 @@ export default function LivePoseInstructor() {
     exerciseStartedRef.current = exerciseStarted;
   }, [exerciseStarted]);
 
-  // Voice function
+  // Voice function - with video audio handling
   const speak = useCallback((text) => {
     if (voiceEnabled && 'speechSynthesis' in window) {
       speechSynthesis.cancel();
+      
+      // Lower video volume when speaking to avoid overlap
+      const video = referenceVideoRef.current;
+      let originalVolume = 1.0;
+      if (video) {
+        originalVolume = video.volume;
+        video.volume = 0.2; // Lower video volume to 20% when speaking
+      }
+      
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
+      utterance.rate = 0.9; // Slightly slower for clarity
+      utterance.volume = 0.8; // Slightly lower volume to be less distracting
 
       const loadVoices = () => {
         const voices = speechSynthesis.getVoices();
@@ -73,6 +92,20 @@ export default function LivePoseInstructor() {
           v.name.toLowerCase().includes("samantha")
         );
         if (female) utterance.voice = female;
+        
+        // Restore video volume when speech ends
+        utterance.onend = () => {
+          if (video) {
+            video.volume = originalVolume;
+          }
+        };
+        
+        utterance.onerror = () => {
+          if (video) {
+            video.volume = originalVolume;
+          }
+        };
+        
         speechSynthesis.speak(utterance);
       };
 
@@ -172,139 +205,433 @@ export default function LivePoseInstructor() {
     return angle;
   }, []);
 
-  // Step evaluation - handles both left and right sides
+  // Calculate back flatness deviation
+  // Returns the maximum deviation from a flat back (0 = perfectly flat)
+  // When sitting, shoulders are much higher than hips, so deviation is large
+  const calculateBackFlatness = useCallback((landmarks) => {
+    const L_SHOULDER = 11, R_SHOULDER = 12;
+    const L_HIP = 23, R_HIP = 24;
+    
+    const l_shoulder = landmarks[L_SHOULDER];
+    const r_shoulder = landmarks[R_SHOULDER];
+    const l_hip = landmarks[L_HIP];
+    const r_hip = landmarks[R_HIP];
+    
+    if (!l_shoulder || !r_shoulder || !l_hip || !r_hip) return 1.0; // Invalid if missing
+    
+    // Calculate average shoulder and hip positions
+    const avgShoulderY = (l_shoulder.y + r_shoulder.y) / 2;
+    const avgHipY = (l_hip.y + r_hip.y) / 2;
+    
+    // Primary check: Vertical deviation between shoulders and hips
+    // When lying flat, shoulders and hips should be at similar Y positions
+    // When sitting, shoulders are much higher (lower Y value) than hips
+    const verticalDeviation = Math.abs(avgShoulderY - avgHipY);
+    
+    // Additional check: Individual shoulder/hip alignment (lateral tilt)
+    const shoulderDeviation = Math.abs(l_shoulder.y - r_shoulder.y);
+    const hipDeviation = Math.abs(l_hip.y - r_hip.y);
+    
+    // For lying down, we also check if shoulders are too high (sitting position)
+    // If shoulders are significantly above hips (lower Y value), person is sitting
+    const shoulderAboveHip = avgShoulderY < avgHipY; // Lower Y = higher on screen
+    const sittingIndicator = shoulderAboveHip ? (avgHipY - avgShoulderY) * 2 : 0; // Penalize sitting more
+    
+    // Maximum deviation - prioritize vertical deviation and sitting detection
+    const maxDeviation = Math.max(
+      verticalDeviation + sittingIndicator, // Main check with sitting penalty
+      shoulderDeviation * 0.5, // Lateral tilt is less critical
+      hipDeviation * 0.5
+    );
+    
+    return maxDeviation;
+  }, []);
+
+  // Step evaluation - uses new statistical ranges with lenient thresholds
   const evaluateStep = useCallback((landmarks, stepRule) => {
     const L_SHOULDER = 11, L_HIP = 23, L_KNEE = 25, L_ANKLE = 27;
     const R_SHOULDER = 12, R_HIP = 24, R_KNEE = 26, R_ANKLE = 28;
+    const L_ELBOW = 13, R_ELBOW = 14, L_WRIST = 15, R_WRIST = 16;
+    const L_FOOT_INDEX = 31, R_FOOT_INDEX = 32;
+    const NOSE = 0, L_EAR = 7, R_EAR = 8;
     
     const l_shoulder = landmarks[L_SHOULDER];
     const l_hip = landmarks[L_HIP];
     const l_knee = landmarks[L_KNEE];
     const l_ankle = landmarks[L_ANKLE];
+    const l_elbow = landmarks[L_ELBOW];
+    const l_wrist = landmarks[L_WRIST];
+    const l_foot_index = landmarks[L_FOOT_INDEX];
     
     const r_shoulder = landmarks[R_SHOULDER];
     const r_hip = landmarks[R_HIP];
     const r_knee = landmarks[R_KNEE];
     const r_ankle = landmarks[R_ANKLE];
+    const r_elbow = landmarks[R_ELBOW];
+    const r_wrist = landmarks[R_WRIST];
+    const r_foot_index = landmarks[R_FOOT_INDEX];
+    
+    const nose = landmarks[NOSE];
+    const l_ear = landmarks[L_EAR];
+    const r_ear = landmarks[R_EAR];
 
     // Calculate angles for both sides
     const left_hip_angle = calculateAngle(l_shoulder, l_hip, l_knee);
     const left_knee_angle = calculateAngle(l_hip, l_knee, l_ankle);
-    const left_ankle_height = l_ankle.y;
+    // Ankle angle: knee-ankle-foot_index
+    const left_ankle_angle = l_knee && l_ankle && l_foot_index ? calculateAngle(l_knee, l_ankle, l_foot_index) : 0;
+    // Elbow angle: shoulder-elbow-wrist
+    const left_elbow_angle = l_shoulder && l_elbow && l_wrist ? calculateAngle(l_shoulder, l_elbow, l_wrist) : 0;
+    // Shoulder angle: hip-shoulder-elbow
+    const left_shoulder_angle = l_hip && l_shoulder && l_elbow ? calculateAngle(l_hip, l_shoulder, l_elbow) : 0;
     
     const right_hip_angle = calculateAngle(r_shoulder, r_hip, r_knee);
     const right_knee_angle = calculateAngle(r_hip, r_knee, r_ankle);
-    const right_ankle_height = r_ankle.y;
+    // Ankle angle: knee-ankle-foot_index
+    const right_ankle_angle = r_knee && r_ankle && r_foot_index ? calculateAngle(r_knee, r_ankle, r_foot_index) : 0;
+    // Elbow angle: shoulder-elbow-wrist
+    const right_elbow_angle = r_shoulder && r_elbow && r_wrist ? calculateAngle(r_shoulder, r_elbow, r_wrist) : 0;
+    // Shoulder angle: hip-shoulder-elbow
+    const right_shoulder_angle = r_hip && r_shoulder && r_elbow ? calculateAngle(r_hip, r_shoulder, r_elbow) : 0;
+    
+    // Calculate average ankle height (both ankles)
+    const ankle_height = l_ankle && r_ankle ? (l_ankle.y + r_ankle.y) / 2 : (l_ankle?.y || r_ankle?.y || 0);
+    
+    // Calculate average knee height
+    const knee_height = l_knee && r_knee ? (l_knee.y + r_knee.y) / 2 : (l_knee?.y || r_knee?.y || 0);
+    
+    // Calculate average hip height
+    const hip_height = l_hip && r_hip ? (l_hip.y + r_hip.y) / 2 : (l_hip?.y || r_hip?.y || 0);
+    
+    // Calculate average shoulder height
+    const shoulder_height = l_shoulder && r_shoulder ? (l_shoulder.y + r_shoulder.y) / 2 : (l_shoulder?.y || r_shoulder?.y || 0);
+    
+    // Calculate hip width (distance between hips)
+    const hip_width = l_hip && r_hip ? Math.abs(l_hip.x - r_hip.x) : 0;
+    
+    // Calculate shoulder width
+    const shoulder_width = l_shoulder && r_shoulder ? Math.abs(l_shoulder.x - r_shoulder.x) : 0;
+    
+    // Calculate head tilt angle (angle between nose and ears)
+    const head_tilt_angle = nose && l_ear && r_ear ? calculateAngle(l_ear, nose, r_ear) : 0;
+    
+    // Calculate spine angle (angle between shoulders and hips)
+    const spine_angle = l_shoulder && r_shoulder && l_hip && r_hip ? 
+      calculateAngle(l_shoulder, l_hip, r_hip) : 0;
+    
+    // Calculate torso angle (angle between shoulders and hips, different calculation)
+    const torso_angle = l_shoulder && r_shoulder && l_hip && r_hip ?
+      calculateAngle(r_shoulder, l_shoulder, l_hip) : 0;
 
     const criteria = stepRule.criteria;
     let score = 0;
-    const maxScore = 6; // 3 points per side
+    let maxScore = 0;
 
-    // LEFT SIDE EVALUATION
-    // Left hip angle
-    if (criteria.left_hip_angle && criteria.left_hip_angle.expected) {
-      const diff = Math.abs(left_hip_angle - criteria.left_hip_angle.expected);
-      if (diff < 30) score += 1; // Within 30 degrees (increased from 20)
-    }
+    // Helper function to check if value is within range with lenient buffer
+    // Uses min/max from JSON with percentage-based buffer for leniency
+    const checkRange = (value, criterion, useLargerBuffer = false) => {
+      if (!criterion || !criterion.min || !criterion.max) return false;
+      
+      // Calculate the range (max - min)
+      const range = criterion.max - criterion.min;
+      
+      // For knee angles, use 15% of range as buffer (more lenient)
+      // For other metrics, use 10% of range as buffer
+      const bufferPercent = useLargerBuffer ? 0.15 : 0.10;
+      const buffer = range * bufferPercent;
+      
+      // Check if value is within min-max range with buffer
+      return value >= (criterion.min - buffer) && value <= (criterion.max + buffer);
+    };
 
-    // Left knee angle - check if within expanded range
-    if (criteria.left_knee_angle && criteria.left_knee_angle.min && criteria.left_knee_angle.max) {
-      const kneeBuffer = 20; // Add 20 degrees buffer on both sides
-      if (left_knee_angle >= criteria.left_knee_angle.min - kneeBuffer && 
-          left_knee_angle <= criteria.left_knee_angle.max + kneeBuffer) {
-        score += 1;
+    // Check left hip angle
+    if (criteria.left_hip_angle) {
+      maxScore++;
+      if (checkRange(left_hip_angle, criteria.left_hip_angle)) {
+        score++;
       }
     }
 
-    // Left ankle height
-    if (criteria.left_ankle_height && criteria.left_ankle_height.expected) {
-      const heightDiff = Math.abs(left_ankle_height - criteria.left_ankle_height.expected);
-      if (heightDiff < 0.25) score += 1; // Within 25% tolerance (increased from 15%)
-    }
-
-    // RIGHT SIDE EVALUATION
-    // Right hip angle
-    if (criteria.right_hip_angle && criteria.right_hip_angle.expected) {
-      const diff = Math.abs(right_hip_angle - criteria.right_hip_angle.expected);
-      if (diff < 30) score += 1; // Within 30 degrees (increased from 20)
-    }
-
-    // Right knee angle - check if within expanded range
-    if (criteria.right_knee_angle && criteria.right_knee_angle.min && criteria.right_knee_angle.max) {
-      const kneeBuffer = 20; // Add 20 degrees buffer on both sides
-      if (right_knee_angle >= criteria.right_knee_angle.min - kneeBuffer && 
-          right_knee_angle <= criteria.right_knee_angle.max + kneeBuffer) {
-        score += 1;
+    // Check left knee angle - MORE LENIENT (use 2*std buffer)
+    if (criteria.left_knee_angle) {
+      maxScore++;
+      if (checkRange(left_knee_angle, criteria.left_knee_angle, true)) {
+        score++;
       }
     }
 
-    // Right ankle height
-    if (criteria.right_ankle_height && criteria.right_ankle_height.expected) {
-      const heightDiff = Math.abs(right_ankle_height - criteria.right_ankle_height.expected);
-      if (heightDiff < 0.25) score += 1; // Within 25% tolerance (increased from 15%)
+    // Check right hip angle
+    if (criteria.right_hip_angle) {
+      maxScore++;
+      if (checkRange(right_hip_angle, criteria.right_hip_angle)) {
+        score++;
+      }
+    }
+
+    // Check right knee angle - MORE LENIENT (use 2*std buffer)
+    if (criteria.right_knee_angle) {
+      maxScore++;
+      if (checkRange(right_knee_angle, criteria.right_knee_angle, true)) {
+        score++;
+      }
+    }
+
+    // Check left ankle angle
+    if (criteria.left_ankle_angle) {
+      maxScore++;
+      if (checkRange(left_ankle_angle, criteria.left_ankle_angle)) {
+        score++;
+      }
+    }
+
+    // Check right ankle angle
+    if (criteria.right_ankle_angle) {
+      maxScore++;
+      if (checkRange(right_ankle_angle, criteria.right_ankle_angle)) {
+        score++;
+      }
+    }
+
+    // Check left elbow angle
+    if (criteria.left_elbow_angle) {
+      maxScore++;
+      if (checkRange(left_elbow_angle, criteria.left_elbow_angle)) {
+        score++;
+      }
+    }
+
+    // Check right elbow angle
+    if (criteria.right_elbow_angle) {
+      maxScore++;
+      if (checkRange(right_elbow_angle, criteria.right_elbow_angle)) {
+        score++;
+      }
+    }
+
+    // Check left shoulder angle
+    if (criteria.left_shoulder_angle) {
+      maxScore++;
+      if (checkRange(left_shoulder_angle, criteria.left_shoulder_angle)) {
+        score++;
+      }
+    }
+
+    // Check right shoulder angle
+    if (criteria.right_shoulder_angle) {
+      maxScore++;
+      if (checkRange(right_shoulder_angle, criteria.right_shoulder_angle)) {
+        score++;
+      }
+    }
+
+    // Check ankle height
+    if (criteria.ankle_height) {
+      maxScore++;
+      if (checkRange(ankle_height, criteria.ankle_height)) {
+        score++;
+      }
+    }
+
+    // Check knee height
+    if (criteria.knee_height) {
+      maxScore++;
+      if (checkRange(knee_height, criteria.knee_height)) {
+        score++;
+      }
+    }
+
+    // Check hip height
+    if (criteria.hip_height) {
+      maxScore++;
+      if (checkRange(hip_height, criteria.hip_height)) {
+        score++;
+      }
+    }
+
+    // Check shoulder height
+    if (criteria.shoulder_height) {
+      maxScore++;
+      if (checkRange(shoulder_height, criteria.shoulder_height)) {
+        score++;
+      }
+    }
+
+    // Check back flatness if required
+    const backFlat = stepRule.back_flat;
+    const backFlatnessDeviation = calculateBackFlatness(landmarks);
+    let backFlatPassed = true;
+    if (backFlat && backFlat.should_be_flat) {
+      maxScore++;
+      // Back is flat if deviation is within max_deviation threshold
+      if (backFlatnessDeviation <= backFlat.max_deviation) {
+        score++;
+        backFlatPassed = true;
+      } else {
+        // Back flatness is REQUIRED - if it fails, significantly penalize the score
+        // This ensures sitting positions are not accepted
+        backFlatPassed = false;
+        // Reduce score by 30% to make it harder to pass without flat back
+        score = Math.floor(score * 0.7);
+      }
     }
 
     return { 
       score, 
-      maxScore,
+      maxScore: Math.max(maxScore, 1), // Ensure at least 1
       metrics: { 
         left_hip_angle, 
-        left_knee_angle, 
-        left_ankle_height,
+        left_knee_angle,
+        left_ankle_angle,
+        left_elbow_angle,
+        left_shoulder_angle,
         right_hip_angle,
         right_knee_angle,
-        right_ankle_height
+        right_ankle_angle,
+        right_elbow_angle,
+        right_shoulder_angle,
+        ankle_height,
+        knee_height,
+        hip_height,
+        shoulder_height,
+        back_flatness_deviation: backFlatnessDeviation
       } 
     };
-  }, [calculateAngle]);
+  }, [calculateAngle, calculateBackFlatness]);
 
-  // Feedback logic - handles both left and right sides
+  // Feedback logic - uses new statistical ranges with lenient thresholds
   const getFeedbackMessage = useCallback((metrics, stepRule) => {
     const c = stepRule.criteria;
     
-    // Check left knee angle with expanded buffer
-    if (c.left_knee_angle && c.left_knee_angle.min && c.left_knee_angle.max) {
-      const kneeBuffer = 30; // Increased buffer for feedback
-      if (metrics.left_knee_angle < c.left_knee_angle.min - kneeBuffer) {
+    // Helper to check if value is outside range with buffer
+    // Uses min/max from JSON with percentage-based buffer for feedback
+    const isOutsideRange = (value, criterion, useLargerBuffer = false) => {
+      if (!criterion || !criterion.min || !criterion.max) return null;
+      
+      // Calculate the range (max - min)
+      const range = criterion.max - criterion.min;
+      
+      // For knee angles, use 20% of range as buffer for feedback (more lenient before feedback)
+      // For other metrics, use 15% of range as buffer
+      const bufferPercent = useLargerBuffer ? 0.20 : 0.15;
+      const buffer = range * bufferPercent;
+      
+      const min = criterion.min - buffer;
+      const max = criterion.max + buffer;
+      
+      if (value < min) return "too_low";
+      if (value > max) return "too_high";
+      return null;
+    };
+    
+    // PRIORITY CHECK: Back flatness (highest priority when required)
+    const backFlat = stepRule.back_flat;
+    if (backFlat && backFlat.should_be_flat) {
+      if (metrics.back_flatness_deviation > backFlat.max_deviation) {
+        return "⚠️ Lie down flat! Keep your back flat on the ground!";
+      }
+    }
+    
+    // Check left knee angle - MORE LENIENT (use 2.5*std buffer for feedback)
+    if (c.left_knee_angle) {
+      const status = isOutsideRange(metrics.left_knee_angle, c.left_knee_angle, true);
+      if (status === "too_low") {
         return "Bend your left knee more!";
       }
-      if (metrics.left_knee_angle > c.left_knee_angle.max + kneeBuffer) {
+      if (status === "too_high") {
         return "Straighten your left knee!";
       }
     }
     
-    // Check right knee angle with expanded buffer
-    if (c.right_knee_angle && c.right_knee_angle.min && c.right_knee_angle.max) {
-      const kneeBuffer = 30; // Increased buffer for feedback
-      if (metrics.right_knee_angle < c.right_knee_angle.min - kneeBuffer) {
+    // Check right knee angle - MORE LENIENT (use 2.5*std buffer for feedback)
+    if (c.right_knee_angle) {
+      const status = isOutsideRange(metrics.right_knee_angle, c.right_knee_angle, true);
+      if (status === "too_low") {
         return "Bend your right knee more!";
       }
-      if (metrics.right_knee_angle > c.right_knee_angle.max + kneeBuffer) {
+      if (status === "too_high") {
         return "Straighten your right knee!";
       }
     }
     
-    // Check left ankle height with increased tolerance
-    if (c.left_ankle_height && c.left_ankle_height.expected) {
-      const heightDiff = Math.abs(metrics.left_ankle_height - c.left_ankle_height.expected);
-      if (heightDiff > 0.35) { // Increased from 0.2 to 0.35
-        if (metrics.left_ankle_height > c.left_ankle_height.expected) {
-          return "Raise your left leg higher!";
-        } else {
-          return "Lower your left leg slightly!";
-        }
+    // Check ankle height (average of both ankles)
+    if (c.ankle_height) {
+      const status = isOutsideRange(metrics.ankle_height, c.ankle_height);
+      if (status === "too_low") {
+        return "Raise your legs higher!";
+      }
+      if (status === "too_high") {
+        return "Lower your legs slightly!";
       }
     }
     
-    // Check right ankle height with increased tolerance
-    if (c.right_ankle_height && c.right_ankle_height.expected) {
-      const heightDiff = Math.abs(metrics.right_ankle_height - c.right_ankle_height.expected);
-      if (heightDiff > 0.35) { // Increased from 0.2 to 0.35
-        if (metrics.right_ankle_height > c.right_ankle_height.expected) {
-          return "Raise your right leg higher!";
-        } else {
-          return "Lower your right leg slightly!";
-        }
+    // Check knee height
+    if (c.knee_height) {
+      const status = isOutsideRange(metrics.knee_height, c.knee_height);
+      if (status === "too_low") {
+        return "Raise your knees higher!";
+      }
+      if (status === "too_high") {
+        return "Lower your knees slightly!";
+      }
+    }
+    
+    // Check hip angles
+    if (c.left_hip_angle) {
+      const status = isOutsideRange(metrics.left_hip_angle, c.left_hip_angle);
+      if (status) {
+        return "Adjust your left hip position!";
+      }
+    }
+    
+    if (c.right_hip_angle) {
+      const status = isOutsideRange(metrics.right_hip_angle, c.right_hip_angle);
+      if (status) {
+        return "Adjust your right hip position!";
+      }
+    }
+    
+    // Check ankle angles
+    if (c.left_ankle_angle) {
+      const status = isOutsideRange(metrics.left_ankle_angle, c.left_ankle_angle);
+      if (status) {
+        return "Adjust your left ankle position!";
+      }
+    }
+    
+    if (c.right_ankle_angle) {
+      const status = isOutsideRange(metrics.right_ankle_angle, c.right_ankle_angle);
+      if (status) {
+        return "Adjust your right ankle position!";
+      }
+    }
+    
+    // Check elbow angles
+    if (c.left_elbow_angle) {
+      const status = isOutsideRange(metrics.left_elbow_angle, c.left_elbow_angle);
+      if (status) {
+        return "Adjust your left arm position!";
+      }
+    }
+    
+    if (c.right_elbow_angle) {
+      const status = isOutsideRange(metrics.right_elbow_angle, c.right_elbow_angle);
+      if (status) {
+        return "Adjust your right arm position!";
+      }
+    }
+    
+    // Check shoulder angles
+    if (c.left_shoulder_angle) {
+      const status = isOutsideRange(metrics.left_shoulder_angle, c.left_shoulder_angle);
+      if (status) {
+        return "Adjust your left shoulder position!";
+      }
+    }
+    
+    if (c.right_shoulder_angle) {
+      const status = isOutsideRange(metrics.right_shoulder_angle, c.right_shoulder_angle);
+      if (status) {
+        return "Adjust your right shoulder position!";
       }
     }
     
@@ -494,16 +821,9 @@ export default function LivePoseInstructor() {
             return { x: sum.x / SMOOTHING_FRAMES, y: sum.y / SMOOTHING_FRAMES, z: sum.z / SMOOTHING_FRAMES };
           });
 
-          const stepIndex = currentStepIndexRef.current;
-          const step = validationRules.steps[stepIndex];
-          const { score, metrics: newMetrics } = evaluateStep(smoothed, step);
-          setMetrics(newMetrics);
-
-          // Check if video has progressed ahead of user's current step
+          // Check which step the video is currently in
           const currentVideoTime = referenceVideoRef.current ? referenceVideoRef.current.currentTime : 0;
-          
-          // Find which step the video is currently in
-          let videoStepIndex = stepIndex;
+          let videoStepIndex = currentStepIndexRef.current;
           for (let i = 0; i < validationRules.steps.length; i++) {
             const s = validationRules.steps[i];
             if (currentVideoTime >= s.start_time && currentVideoTime < s.end_time) {
@@ -512,17 +832,56 @@ export default function LivePoseInstructor() {
             }
           }
           
-          // If video is ahead of user's progress, prompt them to catch up
-          if (videoStepIndex > stepIndex && referenceVideoRef.current && !referenceVideoRef.current.paused) {
-            const nextStep = validationRules.steps[videoStepIndex];
-            const stepName = nextStep.step_name.replace(/_/g, ' ');
+          // ALWAYS evaluate user's pose against the video's current step
+          // This ensures user must match what the video is showing
+          const videoStep = validationRules.steps[videoStepIndex];
+          const { score, maxScore, metrics: newMetrics } = evaluateStep(smoothed, videoStep);
+          setMetrics(newMetrics);
+          
+          // Check back flatness - pause video if back isn't flat when required
+          const backFlat = videoStep.back_flat;
+          const backFlatFailed = backFlat && backFlat.should_be_flat && 
+                                 newMetrics.back_flatness_deviation > backFlat.max_deviation;
+          
+          if (backFlatFailed && referenceVideoRef.current && !referenceVideoRef.current.paused) {
+            // Pause video if back isn't flat
+            referenceVideoRef.current.pause();
             setInstructionType("feedback");
-            setInstructionMessage(`⚠️ Follow the video! Time to ${stepName}`);
+            setInstructionMessage("⚠️ Video paused - Lie down flat! Keep your back flat on the ground!");
+          } else if (!backFlatFailed && referenceVideoRef.current && referenceVideoRef.current.paused && exerciseStarted) {
+            // Resume video when back becomes flat again
+            referenceVideoRef.current.play().catch(err => {
+              console.log("Video resume error:", err);
+            });
+          }
+          
+          // Use percentage-based threshold (40% of maxScore for passing)
+          const passingThreshold = Math.ceil(maxScore * 0.4);
+          const isPassing = score >= passingThreshold;
+          
+          const stepIndex = currentStepIndexRef.current;
+          
+          // If video is ahead of user's tracked step, they need to catch up
+          if (videoStepIndex > stepIndex && referenceVideoRef.current && !referenceVideoRef.current.paused) {
+            const stepName = videoStep.step_name.replace(/_/g, ' ');
             
-            const now = Date.now();
-            if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
-              speak(`Follow the video. It's time to ${stepName}`);
-              lastFeedbackTimeRef.current = now;
+            // If user's pose doesn't match the video's step, give feedback
+            if (!isPassing) {
+              setInstructionType("feedback");
+              setInstructionMessage(`⚠️ Follow the video! ${stepName} - Your pose doesn't match yet.`);
+              
+              const now = Date.now();
+              if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
+                speak(`Follow the video. ${stepName}. Your pose doesn't match yet.`);
+                lastFeedbackTimeRef.current = now;
+              }
+            } else if (isPassing) {
+              // User is matching! Advance their step
+              setInstructionType("ready");
+              setInstructionMessage(`✓ Good! You're matching the video: ${stepName}`);
+              currentStepIndexRef.current = videoStepIndex;
+              setCurrentStepIndex(videoStepIndex);
+              stableCounterRef.current = 0;
             }
             ctx.restore();
             return;
@@ -537,49 +896,74 @@ export default function LivePoseInstructor() {
           }
 
           // Stable pose → advance (with video synchronization)
-          // Reduced score requirement to 3 out of 6 for easier progression
-          if (score >= 3) {
+          // User must match the video's current step to advance
+          // Use percentage-based threshold (40% of maxScore for passing)
+          if (isPassing) {
+            // User is matching the video's current step
             stableCounterRef.current++;
             setInstructionType("ready");
             setInstructionMessage("✓ Great form! Keep holding...");
             
-            // Check if we can advance to next step
-            if (stableCounterRef.current >= REQUIRED_STABLE_FRAMES && stepIndex < validationRules.steps.length - 1) {
-              // Get current video time
-              const currentVideoTime = referenceVideoRef.current ? referenceVideoRef.current.currentTime : 0;
-              const nextStep = validationRules.steps[stepIndex + 1];
-              const currentStep = validationRules.steps[stepIndex];
-              
-              // For step 1, allow advancement as soon as video reaches step 2 start time
-              // Video continues playing, so just check if we're past current step end time
-              if (currentVideoTime >= currentStep.end_time) {
-                stableCounterRef.current = 0;
-                currentStepIndexRef.current++;
-                setCurrentStepIndex(prev => prev + 1);
-                setInstructionMessage(`Next: ${nextStep.step_name}`);
-                speak(`Good job! Now ${nextStep.step_name}`);
-                lastSpokenStepRef.current = nextStep.step_name;
-              } else {
-                // Pose is good but video not at end of current step yet
-                const timeLeft = Math.round(currentStep.end_time - currentVideoTime);
-                if (timeLeft > 0) {
-                  setInstructionMessage(`✓ Perfect! Hold for ${timeLeft} more seconds...`);
+            // Only advance if user is matching the video's step AND video has moved to next step
+            if (stepIndex === videoStepIndex && stableCounterRef.current >= REQUIRED_STABLE_FRAMES) {
+              // Check if video has moved to next step
+              if (videoStepIndex < validationRules.steps.length - 1) {
+                const nextStep = validationRules.steps[videoStepIndex + 1];
+                const currentStep = validationRules.steps[videoStepIndex];
+                
+                // Only advance when video reaches next step's start time
+                if (currentVideoTime >= nextStep.start_time) {
+                  stableCounterRef.current = 0;
+                  currentStepIndexRef.current = videoStepIndex + 1;
+                  setCurrentStepIndex(videoStepIndex + 1);
+                  setInstructionMessage(`Next: ${nextStep.step_name}`);
+                  speak(`Good job! Now ${nextStep.step_name}`);
+                  lastSpokenStepRef.current = nextStep.step_name;
+                } else {
+                  // Pose is good but video not at next step yet
+                  const timeLeft = Math.round(nextStep.start_time - currentVideoTime);
+                  if (timeLeft > 0) {
+                    setInstructionMessage(`✓ Perfect! Hold for ${timeLeft} more seconds...`);
+                  }
                 }
               }
+            } else if (stepIndex < videoStepIndex) {
+              // User is behind - they need to catch up (handled above)
+              stableCounterRef.current = 0;
             }
-          } else stableCounterRef.current = 0;
+          } else {
+            // Score is low - user doesn't match video's step
+            stableCounterRef.current = 0;
+          }
 
-           const fb = getFeedbackMessage(newMetrics, step);
-           setFeedback(fb);
-           if (fb) {
-             setInstructionType("feedback");
-             setInstructionMessage(fb);
-             
-            const now = Date.now();
-            if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
-              speak(fb);
-              lastFeedbackTimeRef.current = now;
+          // Only give feedback if score is low (user is actually doing something wrong)
+          // This prevents false positives when user is in correct position
+          // Use videoStep since we're always evaluating against what the video is showing
+          if (!isPassing) {
+            const fb = getFeedbackMessage(newMetrics, videoStep);
+            setFeedback(fb);
+            if (fb) {
+              setInstructionType("feedback");
+              setInstructionMessage(fb);
+              
+              const now = Date.now();
+              if (now - lastFeedbackTimeRef.current > FEEDBACK_COOLDOWN) {
+                speak(fb);
+                lastFeedbackTimeRef.current = now;
+              }
+            } else {
+              // Clear feedback if no message and score is improving
+              setFeedback("");
+              const improvingThreshold = Math.ceil(maxScore * 0.3);
+              if (score >= improvingThreshold) {
+                setInstructionType("ready");
+                setInstructionMessage("Keep going, you're doing well!");
+              }
             }
+          } else {
+            // Score is good (passing threshold), clear any previous feedback
+            // Message already set above in the isPassing block
+            setFeedback("");
           }
         }
         }
@@ -838,11 +1222,16 @@ export default function LivePoseInstructor() {
                       <span className="metric-value">{metrics.left_knee_angle.toFixed(0)}°</span>
                     </div>
                   </div>
-                  {validationRules.steps[currentStepIndex]?.criteria?.left_knee_angle && (
-                    <div className="metric-range">
-                      Acceptable: {(validationRules.steps[currentStepIndex].criteria.left_knee_angle.min - 20).toFixed(0)}° - {(validationRules.steps[currentStepIndex].criteria.left_knee_angle.max + 20).toFixed(0)}°
-                    </div>
-                  )}
+                  {validationRules.steps[currentStepIndex]?.criteria?.left_knee_angle && (() => {
+                    const crit = validationRules.steps[currentStepIndex].criteria.left_knee_angle;
+                    const range = crit.max - crit.min;
+                    const buffer = range * 0.15; // 15% buffer for knee angles
+                    return (
+                      <div className="metric-range">
+                        Acceptable: {(crit.min - buffer).toFixed(0)}° - {(crit.max + buffer).toFixed(0)}°
+                      </div>
+                    );
+                  })()}
                   
                   {/* Right Knee Angle with Range */}
                   <div className="metric-item">
@@ -852,38 +1241,57 @@ export default function LivePoseInstructor() {
                       <span className="metric-value">{metrics.right_knee_angle.toFixed(0)}°</span>
                     </div>
                   </div>
-                  {validationRules.steps[currentStepIndex]?.criteria?.right_knee_angle && (
-                    <div className="metric-range">
-                      Acceptable: {(validationRules.steps[currentStepIndex].criteria.right_knee_angle.min - 20).toFixed(0)}° - {(validationRules.steps[currentStepIndex].criteria.right_knee_angle.max + 20).toFixed(0)}°
-                    </div>
-                  )}
+                  {validationRules.steps[currentStepIndex]?.criteria?.right_knee_angle && (() => {
+                    const crit = validationRules.steps[currentStepIndex].criteria.right_knee_angle;
+                    const range = crit.max - crit.min;
+                    const buffer = range * 0.15; // 15% buffer for knee angles
+                    return (
+                      <div className="metric-range">
+                        Acceptable: {(crit.min - buffer).toFixed(0)}° - {(crit.max + buffer).toFixed(0)}°
+                      </div>
+                    );
+                  })()}
                   
-                  {/* Left Ankle Height with Range */}
+                  {/* Ankle Height (Average) with Range */}
                   <div className="metric-item">
                     <div className="metric-icon ankle">🟡</div>
                     <div className="metric-content">
-                      <span className="metric-label">Left Ankle Height</span>
-                      <span className="metric-value">{metrics.left_ankle_height.toFixed(2)}</span>
+                      <span className="metric-label">Ankle Height</span>
+                      <span className="metric-value">{metrics.ankle_height.toFixed(2)}</span>
                     </div>
                   </div>
-                  {validationRules.steps[currentStepIndex]?.criteria?.left_ankle_height && (
-                    <div className="metric-range">
-                      Target: {(validationRules.steps[currentStepIndex].criteria.left_ankle_height.expected).toFixed(2)} (±0.25)
-                    </div>
-                  )}
+                  {validationRules.steps[currentStepIndex]?.criteria?.ankle_height && (() => {
+                    const crit = validationRules.steps[currentStepIndex].criteria.ankle_height;
+                    const range = crit.max - crit.min;
+                    const buffer = range * 0.10; // 10% buffer for other metrics
+                    return (
+                      <div className="metric-range">
+                        Acceptable: {(crit.min - buffer).toFixed(2)} - {(crit.max + buffer).toFixed(2)}
+                      </div>
+                    );
+                  })()}
                   
-                  {/* Right Ankle Height with Range */}
-                  <div className="metric-item">
-                    <div className="metric-icon ankle">🟡</div>
-                    <div className="metric-content">
-                      <span className="metric-label">Right Ankle Height</span>
-                      <span className="metric-value">{metrics.right_ankle_height.toFixed(2)}</span>
-                    </div>
-                  </div>
-                  {validationRules.steps[currentStepIndex]?.criteria?.right_ankle_height && (
-                    <div className="metric-range">
-                      Target: {(validationRules.steps[currentStepIndex].criteria.right_ankle_height.expected).toFixed(2)} (±0.25)
-                    </div>
+                  {/* Knee Height with Range */}
+                  {validationRules.steps[currentStepIndex]?.criteria?.knee_height && (
+                    <>
+                      <div className="metric-item">
+                        <div className="metric-icon knee">🟢</div>
+                        <div className="metric-content">
+                          <span className="metric-label">Knee Height</span>
+                          <span className="metric-value">{metrics.knee_height.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      {(() => {
+                        const crit = validationRules.steps[currentStepIndex].criteria.knee_height;
+                        const range = crit.max - crit.min;
+                        const buffer = range * 0.10; // 10% buffer for other metrics
+                        return (
+                          <div className="metric-range">
+                            Acceptable: {(crit.min - buffer).toFixed(2)} - {(crit.max + buffer).toFixed(2)}
+                          </div>
+                        );
+                      })()}
+                    </>
                   )}
                 </div>
                 
